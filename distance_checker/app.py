@@ -191,13 +191,35 @@ def main() -> None:
     prev_frame_time = start_time
     fps = 0.0
     latest_diameter_px = None
+    frames_shown = 0
+    black_frames_shown = 0
+    consecutive_failures = 0
 
     with FaceLandmarker.create_from_options(options) as landmarker:
         while True:
             ok, frame = cap.read()
             if not ok:
-                print("Camera frame grab failed; exiting.")
-                break
+                consecutive_failures += 1
+                if consecutive_failures >= 15:  # ~1.5s of nothing but failures
+                    print(
+                        f"Camera stopped delivering frames after {frames_shown} good read(s) "
+                        f"({black_frames_shown} of them were black). Exiting."
+                    )
+                    break
+                time.sleep(0.1)
+                continue
+            consecutive_failures = 0
+            frames_shown += 1
+            if frame.mean() < 1.0:
+                black_frames_shown += 1
+                if frames_shown == 30 and black_frames_shown == frames_shown:
+                    print(
+                        "Warning: every frame so far has been solid black. The camera session is "
+                        "open but the sensor isn't actually streaming - check the camera's green "
+                        "indicator light, close other apps that might be holding the camera "
+                        "(Zoom/FaceTime/Photo Booth/OBS/another python process), and confirm this "
+                        "terminal app is allowed under System Settings -> Privacy & Security -> Camera."
+                    )
 
             frame = cv2.flip(frame, 1)
             h, w = frame.shape[:2]
