@@ -5,10 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Distance Checker</title>
   <link rel="stylesheet" href="style.css" />
+  <script>
+    (function () {
+      try {
+        var KEY = "distance-checker:theme";
+        var saved = localStorage.getItem(KEY);
+        var theme =
+          saved ||
+          (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark");
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <header>
-    <h1>Distance Checker</h1>
+    <div class="header-row">
+      <h1>Distance Checker</h1>
+      <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">🌙</button>
+    </div>
     <p class="subtitle">Real-time webcam distance tracking with on-device deep learning (MediaPipe Face Landmarker, runs entirely in your browser)</p>
   </header>
 
