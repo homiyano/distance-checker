@@ -630,6 +630,10 @@ function onPomodoroPhaseEnded(nextPhase: PomodoroPhase): void {
 }
 
 pomodoroStartBtn.addEventListener("click", () => {
+  // Re-unlock on every click (not just "Start Camera") so the alarm can
+  // never end up silent because a browser suspended an idle AudioContext.
+  alarmSoundEngine.unlock();
+  emergencyAlarmEngine.unlock();
   if (pomodoroTimer.running) pomodoroTimer.pause();
   else pomodoroTimer.start();
   renderPomodoroUI();
