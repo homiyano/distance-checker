@@ -792,7 +792,7 @@ function renderLoop(): void {
   const trackingActive =
     enableAwayAlertInput.checked && pomodoroTimer.phase === "focus" && pomodoroTimer.running;
   const presenceIsBad = trackingActive && smoothedPresence === "away";
-  const awayThresholdMs = Math.max(1, Number(awayThresholdInput.value) || 10) * 1000;
+  const awayThresholdMs = Math.max(1, Number(awayThresholdInput.value) || 5) * 1000;
   const presenceAlarming = driveChannelAlerts(
     presenceStatusCard,
     presenceEpisode,
