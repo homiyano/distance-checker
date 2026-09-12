@@ -149,6 +149,42 @@ select, input[type="number"] {
 .status-card.warn { border-color: var(--warn); color: var(--warn); }
 .status-card.bad { border-color: var(--bad); color: var(--bad); }
 
+.status-card.sustained { animation: sustained-pulse 1.2s ease-in-out infinite; }
+
+@keyframes sustained-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.snooze-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.snooze-row button {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+#snooze-remaining {
+  font-size: 0.75rem;
+}
+
+.checkbox-field {
+  flex-direction: row;
+  align-items: center;
+}
+
+.checkbox-field label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
 details summary {
   cursor: pointer;
   color: var(--muted);
