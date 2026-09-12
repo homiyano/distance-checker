@@ -31,6 +31,7 @@ from mediapipe.tasks.python.vision import (
 )
 
 from . import calibration as calib
+from .camera_menu import discover_cameras, select_camera
 from .geometry import average_iris_diameter_px
 from .model import DEFAULT_MODEL_PATH, ensure_model
 
@@ -44,7 +45,12 @@ COLOR_TEXT_BG = (20, 20, 20)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Real-time deep-learning webcam distance checker")
-    p.add_argument("--camera", type=int, default=0, help="Camera index (default: 0)")
+    p.add_argument(
+        "--camera",
+        type=int,
+        default=None,
+        help="Camera index. Omit to pick from an on-screen menu instead.",
+    )
     p.add_argument(
         "--calib-distance-cm",
         type=float,
@@ -127,6 +133,15 @@ def main() -> None:
         list_cameras()
         return
 
+    if args.camera is not None:
+        camera_index = args.camera
+    else:
+        camera_options = discover_cameras()
+        camera_index = select_camera(camera_options)
+        if camera_index is None:
+            print("No camera selected; exiting.")
+            return
+
     model_path = ensure_model(args.model)
 
     options = FaceLandmarkerOptions(
@@ -139,9 +154,9 @@ def main() -> None:
     )
 
     backend = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
-    cap = cv2.VideoCapture(args.camera, backend)
+    cap = cv2.VideoCapture(camera_index, backend)
     if not cap.isOpened():
-        raise SystemExit(f"Could not open camera index {args.camera}")
+        raise SystemExit(f"Could not open camera index {camera_index}")
 
     # On macOS the camera can report "opened" before the AVFoundation session
     # has actually started streaming, so the first handful of reads can fail

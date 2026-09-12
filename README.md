@@ -44,7 +44,19 @@ On first launch, macOS will prompt for camera access for your terminal app —
 allow it (System Settings → Privacy & Security → Camera if you missed the
 prompt).
 
-**Controls:**
+Before the video window opens, you'll see a **camera picker menu**. It lists
+every camera macOS knows about (built-in webcam, iPhone via Continuity
+Camera, virtual cams like OBS) purely from device metadata — it doesn't open
+any of them yet, so it won't trigger the iPhone handoff prompt just for
+showing the list. The built-in webcam is highlighted as recommended; iPhone
+entries are flagged with a warning since selecting one will ask your phone
+to confirm. Click a camera, or press its number key, to proceed.
+
+**Controls (picker menu):**
+- click a camera, or press its number key, to select it
+- `Esc` — quit without opening the app
+
+**Controls (main app):**
 - `c` — calibrate: sit at the distance given by `--calib-distance-cm`
   (default 50cm / ~20in) and press this once. Only needs to be done once ever.
 - `r` — clear calibration for the current session
@@ -54,31 +66,26 @@ prompt).
 
 ```bash
 python main.py --calib-distance-cm 50 --too-close-cm 40 --too-far-cm 75
-python main.py --camera 1          # use a different camera index
+python main.py --camera 1          # skip the picker menu, use this index directly
 python main.py --reset-calibration # ignore saved calibration.json on startup
 ```
 
-## Picking the right camera (Continuity Camera / OBS)
+## Continuity Camera / OBS sending a prompt to your phone
 
-If macOS has your iPhone (Continuity Camera) or OBS Virtual Camera installed,
-index `0` may not be your laptop's built-in webcam — you might even see a
-handoff prompt pop up on your iPhone instead of getting a live feed. Run:
-
-```bash
-python main.py --list-cameras
-```
-
-This probes indices 0-4, saves a snapshot from each into `camera_probe/`, and
-prints their resolution. Open the snapshots, find the one showing your face
-(the built-in webcam), then always pass that index, e.g.:
-
-```bash
-python main.py --camera 1
-```
+The picker menu (see above) only reads camera *metadata*, so just seeing the
+menu never touches your iPhone. But if you deliberately click/select the
+iPhone entry (or pass `--camera <its index>` directly), macOS will still ask
+your phone to confirm the handoff — that's expected for that specific device,
+not a bug. Just pick the entry marked **Built-in** instead.
 
 To stop the iPhone from being offered as a webcam at all: on the iPhone, go
 to **Settings → General → AirPlay & Handoff** and turn off **Continuity
 Camera Webcam**.
+
+If you ever need a lower-level fallback (e.g. the menu's device list doesn't
+match reality), `python main.py --list-cameras` probes indices 0-4 directly
+and saves a snapshot from each into `camera_probe/` — note this *does* open
+every device, including the iPhone, so it can trigger that prompt.
 
 ## Notes
 
