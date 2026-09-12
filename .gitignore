@@ -5,3 +5,8 @@ models/
 calibration.json
 camera_probe/
 .claude/worktrees/
+
+# web/ (Vite + TypeScript)
+web/node_modules/
+web/dist/
+web/dev-dist/

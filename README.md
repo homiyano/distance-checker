@@ -46,13 +46,47 @@ Then open **http://localhost:8080** in Chrome (or any modern browser).
 No Python, no venv, no native camera permission wrangling — just Docker +
 a browser tab.
 
+### Local development
+
+The app is a Vite + TypeScript project under `web/`:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+This starts a hot-reload dev server (prints its own URL, typically
+http://localhost:5173). `docker compose up --build` still works unchanged —
+the Dockerfile runs `npm run build` for you inside the image.
+
+### Extra features
+
+- **Distance sparkline** — a rolling 60-second chart of your distance,
+  under the status card.
+- **Face mesh overlay** — an opt-in checkbox (Advanced settings) that draws
+  the full MediaPipe face mesh wireframe over the video.
+- **Light/dark theme** — a toggle in the header; respects your OS
+  preference by default and remembers your choice.
+- **Sustained alerts** — after being too close/far continuously for a
+  configurable duration (default 15s), the app can fire a browser
+  notification and/or speak an alert aloud (both opt-in, Advanced
+  settings), plus a 10-minute snooze button.
+- **Picture-in-Picture** — a "Float window" button pops the live camera
+  feed and status into an always-on-top floating window (Chromium browsers).
+- **Accessibility** — screen-reader announcements on status changes, full
+  keyboard operability, and visible focus states.
+- **Installable / offline-ready (PWA)** — the app can be installed from the
+  browser and caches its own assets plus the MediaPipe WASM/model files for
+  fast repeat loads.
+
 ### Notes
 
 - Selecting your iPhone from the camera dropdown will still trigger its
   Continuity Camera handoff confirmation on the phone — that's Apple's
   behavior for that specific device, not this app. Pick your built-in
   webcam from the dropdown to avoid it.
-- Calibration and threshold settings are stored per-browser
+- Calibration, theme, and threshold settings are stored per-browser
   (`localStorage`), not shared with the Python version.
 
 ---
