@@ -10,6 +10,18 @@ import {
   distanceMmFromCalibration,
   calibrateFromMeasurement,
 } from "./calibration";
+import {
+  type PostureCalibration,
+  type HeadPose,
+  headPoseFromTransformationMatrix,
+  loadPostureCalibration,
+  savePostureCalibration,
+  clearPostureCalibration,
+  calibratePostureFromPose,
+  assessPosture,
+} from "./posture";
+import { SustainedStateTracker, SustainedEpisode } from "./alerts";
+import { alarmSoundEngine, type AlarmSoundId } from "./sound";
 import { populateDeviceList, startStreamForDevice } from "./camera";
 
 const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
@@ -18,7 +30,8 @@ const MODEL_URL =
 const THEME_KEY = "distance-checker:theme";
 
 type StatusKind = "ok" | "warn" | "bad";
-type SmoothedState = "close" | "far" | "good" | null;
+type SmoothedDistanceState = "close" | "far" | "good" | null;
+type SmoothedPostureState = "slouching" | "tilted" | "good" | null;
 type Theme = "light" | "dark";
 
 function el<T extends HTMLElement>(id: string): T {
@@ -66,6 +79,21 @@ const snoozeRemainingEl = el<HTMLElement>("snooze-remaining");
 const statusAnnouncer = el<HTMLElement>("status-announcer");
 const pipBtn = el<HTMLButtonElement>("pip-btn");
 
+// --- Posture checker ---
+const postureStatusCard = el<HTMLElement>("posture-status-card");
+const postureStatusText = el<HTMLElement>("posture-status-text");
+const postureAnnouncer = el<HTMLElement>("posture-status-announcer");
+const calibratePostureBtn = el<HTMLButtonElement>("calibrate-posture-btn");
+const resetPostureCalibBtn = el<HTMLButtonElement>("reset-posture-calib-btn");
+const postureSensitivityInput = el<HTMLInputElement>("posture-sensitivity");
+
+// --- Customizable alarm sound ---
+const enableAlarmSoundInput = el<HTMLInputElement>("enable-alarm-sound");
+const alarmSoundSelect = el<HTMLSelectElement>("alarm-sound-select");
+const alarmVolumeInput = el<HTMLInputElement>("alarm-volume");
+const alarmRepeatSecondsInput = el<HTMLInputElement>("alarm-repeat-seconds");
+const testSoundBtn = el<HTMLButtonElement>("test-sound-btn");
+
 const videoWrapEl = document.querySelector<HTMLDivElement>(".video-wrap");
 if (!videoWrapEl) throw new Error("Missing .video-wrap");
 const videoWrap: HTMLDivElement = videoWrapEl;
@@ -73,11 +101,22 @@ const videoWrap: HTMLDivElement = videoWrapEl;
 let currentStream: MediaStream | null = null;
 let faceLandmarker: FaceLandmarker | null = null;
 let calibration: Calibration | null = loadCalibration();
+let postureCalibration: PostureCalibration | null = loadPostureCalibration();
 let latestIrisDiameterPx: number | null = null;
+let latestHeadPose: HeadPose | null = null;
 let fps = 0;
 let lastFrameTime = performance.now();
 let rafId: number | null = null;
+let backgroundTimerId: number | null = null;
 let lastAnnouncedKind: StatusKind | undefined;
+let lastAnnouncedPostureKind: StatusKind | undefined;
+const ORIGINAL_TITLE = document.title;
+
+// A background tab throttles/pauses requestAnimationFrame, but the webcam
+// stream itself keeps delivering frames — so while hidden we fall back to a
+// low-rate setTimeout loop instead, keeping distance/posture monitoring (and
+// therefore alerts) alive while the user works in another tab or app.
+const BACKGROUND_FRAME_INTERVAL_MS = 500;
 
 // --- Document Picture-in-Picture (floating window) ---
 interface DocumentPictureInPictureAPI {
@@ -90,6 +129,7 @@ const supportsDocumentPip = Boolean(documentPictureInPicture);
 
 let pipWindow: Window | null = null;
 let pipStatusEl: HTMLDivElement | null = null;
+let pipPostureEl: HTMLDivElement | null = null;
 let pipPlaceholder: HTMLDivElement | null = null;
 
 if (pipBtn) pipBtn.hidden = !supportsDocumentPip;
@@ -105,22 +145,22 @@ const SPARKLINE_MAX_SAMPLES = Math.ceil(SPARKLINE_WINDOW_MS / SPARKLINE_UPDATE_I
 const distanceHistory: DistanceSample[] = [];
 let lastSparklineSampleTime = 0;
 
-// --- Sustained-state smoothing + alerting (notifications / speech) ---
-// This tracks the distance state ("close" / "far" / "good" / null) separately
-// from the per-frame `setStatus` calls below, so the visible status card keeps
-// reacting instantly (unchanged behavior) while alerts only react to a
+// --- Sustained-state smoothing + alerting (notifications / speech / sound) ---
+// Each channel (distance, posture) tracks its raw per-frame state separately
+// from the per-frame `setStatus`/`setPostureStatus` calls below, so the
+// visible status cards keep reacting instantly while alerts only react to a
 // hysteresis-smoothed, sustained state.
 const STATE_HYSTERESIS_MS = 1500; // ~1.5s of consistent state before it "counts" as changed
 const SNOOZE_MS = 10 * 60 * 1000; // 10 minutes
 
-let rawPendingState: SmoothedState = null;
-let rawPendingSince = 0;
-let smoothedState: SmoothedState = null;
+const distanceStateTracker = new SustainedStateTracker(STATE_HYSTERESIS_MS);
+const postureStateTracker = new SustainedStateTracker(STATE_HYSTERESIS_MS);
+const distanceEpisode = new SustainedEpisode();
+const postureEpisode = new SustainedEpisode();
 
-let sustainedSince: number | null = null; // when smoothedState most recently became "close"/"far"
-let episodeNotified = false;
-let episodeSpoken = false;
 let snoozeUntil = 0;
+let soundAlarmActive = false;
+let titleFlashOn = false;
 
 // --- Theme (light/dark) ---
 function applyTheme(theme: Theme): void {
@@ -160,6 +200,7 @@ async function ensureFaceLandmarker(): Promise<FaceLandmarker> {
     baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
     runningMode: "VIDEO",
     numFaces: 1,
+    outputFacialTransformationMatrixes: true,
   });
   return faceLandmarker;
 }
@@ -184,6 +225,26 @@ function setStatus(text: string, kind?: StatusKind): void {
     pipStatusEl.textContent = text;
     pipStatusEl.classList.remove("ok", "warn", "bad");
     if (kind) pipStatusEl.classList.add(kind);
+  }
+}
+
+function setPostureStatus(text: string, kind?: StatusKind): void {
+  postureStatusText.textContent = text;
+  postureStatusCard.classList.remove("ok", "warn", "bad");
+  if (kind) postureStatusCard.classList.add(kind);
+
+  if (kind !== lastAnnouncedPostureKind) {
+    lastAnnouncedPostureKind = kind;
+    if (postureAnnouncer) {
+      postureAnnouncer.setAttribute("aria-live", kind === "bad" ? "assertive" : "polite");
+      postureAnnouncer.textContent = text;
+    }
+  }
+
+  if (pipPostureEl) {
+    pipPostureEl.textContent = text;
+    pipPostureEl.classList.remove("ok", "warn", "bad");
+    if (kind) pipPostureEl.classList.add(kind);
   }
 }
 
@@ -214,6 +275,7 @@ function onPipClosed(): void {
   }
   pipPlaceholder = null;
   pipStatusEl = null;
+  pipPostureEl = null;
   pipWindow = null;
   if (pipBtn) {
     pipBtn.textContent = "Float window (PiP)";
@@ -247,8 +309,16 @@ async function openPip(): Promise<void> {
     if (statusCard.classList.contains(kind)) pipStatusEl.classList.add(kind);
   }
 
+  pipPostureEl = document.createElement("div");
+  pipPostureEl.className = "status-card pip-status";
+  pipPostureEl.textContent = postureStatusText.textContent;
+  for (const kind of ["ok", "warn", "bad"] as const) {
+    if (postureStatusCard.classList.contains(kind)) pipPostureEl.classList.add(kind);
+  }
+
   pipWindow.document.body.appendChild(videoWrap);
   pipWindow.document.body.appendChild(pipStatusEl);
+  pipWindow.document.body.appendChild(pipPostureEl);
   pipWindow.addEventListener("pagehide", onPipClosed, { once: true });
 
   if (pipBtn) {
@@ -354,22 +424,6 @@ function isSnoozed(now: number): boolean {
   return now < snoozeUntil;
 }
 
-// Hysteresis: only adopt a new raw state once it has been reported
-// consistently for STATE_HYSTERESIS_MS, so brief flickers (e.g. leaning
-// forward for a split second) don't trigger alert logic.
-function updateSmoothedState(rawState: SmoothedState, now: number): SmoothedState {
-  if (rawState !== rawPendingState) {
-    rawPendingState = rawState;
-    rawPendingSince = now;
-  }
-  if (smoothedState === null) {
-    smoothedState = rawState;
-  } else if (rawState !== smoothedState && now - rawPendingSince >= STATE_HYSTERESIS_MS) {
-    smoothedState = rawState;
-  }
-  return smoothedState;
-}
-
 function maybeNotify(title: string, body: string): void {
   if (!enableNotificationsInput.checked) return;
   if (typeof Notification === "undefined") return;
@@ -396,44 +450,61 @@ function speak(text: string): void {
   }
 }
 
-// Drives the sustained-episode logic: fires (at most once per episode) a
-// notification/speech alert once the smoothed state has been "close" or
-// "far" continuously for the configured alert-after duration, and resets
-// the episode once the state returns to "good"/unknown.
-function handleSustainedAlerts(state: SmoothedState, now: number): void {
-  const isBad = state === "close" || state === "far";
-  if (!isBad) {
-    sustainedSince = null;
-    episodeNotified = false;
-    episodeSpoken = false;
-    statusCard.classList.remove("sustained");
-    return;
-  }
-
-  if (sustainedSince === null) sustainedSince = now;
-  const sustainedMs = now - sustainedSince;
+// Drives one channel's sustained-episode logic: fires (at most once per
+// episode) a notification/speech alert once the smoothed state has been
+// continuously bad for the configured alert-after duration, and resets the
+// episode once the state returns to "good"/unknown. Returns whether this
+// channel is currently "alarming" (past the sustained threshold, unsnoozed).
+function driveChannelAlerts(
+  card: HTMLElement,
+  episode: SustainedEpisode,
+  isBad: boolean,
+  now: number,
+  notifyTitle: string,
+  notifyBody: string,
+  speechText: string
+): boolean {
   const alertAfterMs = Math.max(1, Number(alertAfterInput.value) || 15) * 1000;
   const snoozed = isSnoozed(now);
+  const alarming = episode.update(isBad, now, alertAfterMs, snoozed, {
+    onNotify: () => maybeNotify(notifyTitle, notifyBody),
+    onSpeak: () => speak(speechText),
+  });
+  card.classList.toggle("sustained", alarming);
+  return alarming;
+}
 
-  statusCard.classList.toggle("sustained", sustainedMs >= alertAfterMs && !snoozed);
-
-  if (sustainedMs < alertAfterMs || snoozed) return;
-
-  const notifyMessage =
-    state === "close"
-      ? "You've been sitting too close for a while"
-      : "You've been sitting too far for a while";
-  const speechMessage = state === "close" ? "You're sitting too close" : "You're sitting too far away";
-
-  if (!episodeNotified) {
-    episodeNotified = true;
-    maybeNotify("Distance Checker", notifyMessage);
-  }
-  if (!episodeSpoken) {
-    episodeSpoken = true;
-    speak(speechMessage);
+// Starts/stops the repeating customizable alarm sound as channels enter or
+// leave the "alarming" state, so it plays continuously while distance and/or
+// posture stay bad — including while the tab is backgrounded.
+function updateAlarmSound(shouldAlarm: boolean): void {
+  const enabled = enableAlarmSoundInput.checked;
+  if (shouldAlarm && enabled) {
+    if (!soundAlarmActive) {
+      soundAlarmActive = true;
+      const sound = alarmSoundSelect.value as AlarmSoundId;
+      const volume = Number(alarmVolumeInput.value) / 100;
+      const intervalMs = Math.max(1, Number(alarmRepeatSecondsInput.value) || 20) * 1000;
+      alarmSoundEngine.startRepeating(sound, volume, intervalMs);
+    }
+  } else if (soundAlarmActive) {
+    soundAlarmActive = false;
+    alarmSoundEngine.stopRepeating();
   }
 }
+
+// Flashes the document title while any channel is alarming and the tab is
+// hidden, so switching back to another app/tab still surfaces the alert.
+function updateTitleFlash(anyAlarming: boolean): void {
+  if (anyAlarming && document.hidden) {
+    titleFlashOn = !titleFlashOn;
+    document.title = titleFlashOn ? "⚠️ Check your posture/distance" : ORIGINAL_TITLE;
+  } else if (document.title !== ORIGINAL_TITLE) {
+    document.title = ORIGINAL_TITLE;
+  }
+}
+let lastAnyAlarming = false;
+setInterval(() => updateTitleFlash(lastAnyAlarming), 1000);
 
 function updateSnoozeUI(now: number): void {
   const remainingMs = snoozeUntil - now;
@@ -452,8 +523,18 @@ function updateSnoozeUI(now: number): void {
   }
 }
 
+function scheduleNextFrame(): void {
+  if (document.hidden) {
+    backgroundTimerId = window.setTimeout(renderLoop, BACKGROUND_FRAME_INTERVAL_MS);
+  } else {
+    rafId = requestAnimationFrame(renderLoop);
+  }
+}
+
 function renderLoop(): void {
-  rafId = requestAnimationFrame(renderLoop);
+  rafId = null;
+  backgroundTimerId = null;
+  scheduleNextFrame();
   if (video.readyState < 2 || !faceLandmarker) return;
 
   if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
@@ -471,7 +552,9 @@ function renderLoop(): void {
   fpsEl.textContent = `FPS: ${fps.toFixed(0)}`;
 
   latestIrisDiameterPx = null;
-  let rawState: SmoothedState = null; // feeds sustained-alert smoothing only
+  latestHeadPose = null;
+  let rawDistanceState: SmoothedDistanceState = null; // feeds sustained-alert smoothing only
+  let rawPostureState: SmoothedPostureState = null;
 
   if (result.faceLandmarks && result.faceLandmarks.length > 0) {
     const landmarks = result.faceLandmarks[0];
@@ -501,25 +584,80 @@ function renderLoop(): void {
       recordDistanceSample(now, distanceCm);
       if (distanceCm < tooClose) {
         setStatus(`Too close (${distanceCm.toFixed(0)} cm)`, "bad");
-        rawState = "close";
+        rawDistanceState = "close";
       } else if (distanceCm > tooFar) {
         setStatus(`Too far (${distanceCm.toFixed(0)} cm)`, "warn");
-        rawState = "far";
+        rawDistanceState = "far";
       } else {
         setStatus(`Good distance (${distanceCm.toFixed(0)} cm)`, "ok");
-        rawState = "good";
+        rawDistanceState = "good";
       }
     } else {
       recordDistanceSample(now, null);
       setStatus(`Not calibrated — sit at ${calibDistanceInput.value}cm and press Calibrate`, "warn");
     }
+
+    const matrix = result.facialTransformationMatrixes?.[0];
+    if (matrix) {
+      latestHeadPose = headPoseFromTransformationMatrix(matrix.data);
+    }
+
+    if (latestHeadPose && postureCalibration) {
+      const sensitivityDeg = Math.max(1, Number(postureSensitivityInput.value) || 8);
+      const assessment = assessPosture(latestHeadPose, postureCalibration, sensitivityDeg);
+      if (assessment.issue === "slouching") {
+        setPostureStatus("Slouching — sit up straight", "bad");
+        rawPostureState = "slouching";
+      } else if (assessment.issue === "tilted") {
+        setPostureStatus("Head tilted — straighten up", "warn");
+        rawPostureState = "tilted";
+      } else {
+        setPostureStatus("Good posture", "ok");
+        rawPostureState = "good";
+      }
+    } else if (latestHeadPose) {
+      setPostureStatus("Not calibrated — sit up straight and press Calibrate posture", "warn");
+    } else {
+      setPostureStatus("Posture data unavailable", "warn");
+    }
   } else {
     recordDistanceSample(now, null);
     setStatus("No face detected", "bad");
+    setPostureStatus("No face detected", "bad");
   }
 
-  const smoothed = updateSmoothedState(rawState, now);
-  handleSustainedAlerts(smoothed, now);
+  const smoothedDistance = distanceStateTracker.update(rawDistanceState, now);
+  const smoothedPosture = postureStateTracker.update(rawPostureState, now);
+
+  const distanceIsBad = smoothedDistance === "close" || smoothedDistance === "far";
+  const distanceAlarming = driveChannelAlerts(
+    statusCard,
+    distanceEpisode,
+    distanceIsBad,
+    now,
+    "Distance Checker",
+    smoothedDistance === "close"
+      ? "You've been sitting too close for a while"
+      : "You've been sitting too far for a while",
+    smoothedDistance === "close" ? "You're sitting too close" : "You're sitting too far away"
+  );
+
+  const postureIsBad = smoothedPosture === "slouching" || smoothedPosture === "tilted";
+  const postureAlarming = driveChannelAlerts(
+    postureStatusCard,
+    postureEpisode,
+    postureIsBad,
+    now,
+    "Posture Checker",
+    smoothedPosture === "slouching"
+      ? "You've been slouching for a while"
+      : "Your head has been tilted for a while",
+    smoothedPosture === "slouching" ? "Sit up straight" : "Straighten your head"
+  );
+
+  const anyAlarming = distanceAlarming || postureAlarming;
+  lastAnyAlarming = anyAlarming;
+  updateAlarmSound(anyAlarming);
 }
 
 function doCalibrate(): void {
@@ -541,10 +679,30 @@ function doResetCalibration(): void {
   setStatus("Calibration cleared", "warn");
 }
 
+function doCalibratePosture(): void {
+  if (!latestHeadPose) {
+    setPostureStatus("Can't calibrate — no face detected right now", "bad");
+    return;
+  }
+  const cal = calibratePostureFromPose(latestHeadPose);
+  postureCalibration = cal;
+  savePostureCalibration(cal);
+  speak("Posture calibrated");
+}
+
+function doResetPostureCalibration(): void {
+  postureCalibration = null;
+  clearPostureCalibration();
+  setPostureStatus("Posture calibration cleared", "warn");
+}
+
 startBtn.addEventListener("click", async () => {
   startBtn.disabled = true;
   startBtn.textContent = "Requesting camera…";
   try {
+    // Unlock the AudioContext here (a user gesture) so the alarm sound can
+    // play later even when triggered from a background tab/timer.
+    alarmSoundEngine.unlock();
     // First grant unlocks device labels for enumerateDevices().
     currentStream = await startStreamForDevice(video, currentStream, null);
     const activeStream = currentStream;
@@ -571,7 +729,7 @@ startBtn.addEventListener("click", async () => {
       showStage();
     }
 
-    if (rafId === null) renderLoop();
+    if (rafId === null && backgroundTimerId === null) renderLoop();
   } catch (err) {
     console.error(err);
     setStatus("Camera access failed: " + errorMessage(err), "bad");
@@ -596,10 +754,22 @@ changeCameraBtn.addEventListener("click", () => {
 
 calibrateBtn.addEventListener("click", doCalibrate);
 resetCalibBtn.addEventListener("click", doResetCalibration);
+calibratePostureBtn.addEventListener("click", doCalibratePosture);
+resetPostureCalibBtn.addEventListener("click", doResetPostureCalibration);
+
+testSoundBtn.addEventListener("click", () => {
+  alarmSoundEngine.unlock();
+  const sound = alarmSoundSelect.value as AlarmSoundId;
+  const volume = Number(alarmVolumeInput.value) / 100;
+  alarmSoundEngine.playOnce(sound, volume);
+});
 
 snoozeBtn.addEventListener("click", () => {
   snoozeUntil = performance.now() + SNOOZE_MS;
   updateSnoozeUI(performance.now());
+  // Silence immediately rather than waiting for the next detection frame.
+  soundAlarmActive = false;
+  alarmSoundEngine.stopRepeating();
 });
 
 // Independent of the render loop so the countdown keeps ticking even before
@@ -618,4 +788,6 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "c") doCalibrate();
   if (e.key === "r") doResetCalibration();
+  if (e.key === "p") doCalibratePosture();
+  if (e.key === "o") doResetPostureCalibration();
 });

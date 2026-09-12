@@ -144,6 +144,16 @@ select, input[type="number"] {
   font-size: 0.9rem;
 }
 
+input[type="range"] {
+  accent-color: var(--accent);
+  width: 100%;
+}
+
+.privacy-note {
+  color: var(--text);
+  opacity: 0.85;
+}
+
 .stage {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
