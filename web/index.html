@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Distance Checker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Distance Checker</h1>
+    <p class="subtitle">Real-time webcam distance tracking with on-device deep learning (MediaPipe Face Landmarker, runs entirely in your browser)</p>
+  </header>
+
+  <main>
+    <section class="controls" id="setup-panel">
+      <button id="start-btn" class="primary">Start Camera</button>
+
+      <div class="field" id="device-field" hidden>
+        <label for="device-select">Camera</label>
+        <select id="device-select"></select>
+      </div>
+    </section>
+
+    <section class="stage" id="stage" hidden>
+      <div class="video-wrap">
+        <canvas id="canvas"></canvas>
+        <video id="video" autoplay playsinline muted hidden></video>
+      </div>
+
+      <div class="panel">
+        <div class="status-card" id="status-card">
+          <span id="status-text">Waiting for face…</span>
+        </div>
+
+        <div class="field">
+          <label for="calib-distance">Calibration distance (cm)</label>
+          <input type="number" id="calib-distance" value="50" min="10" max="200" />
+        </div>
+        <button id="calibrate-btn">Calibrate at this distance (c)</button>
+        <button id="reset-calib-btn" class="secondary">Reset calibration (r)</button>
+
+        <details>
+          <summary>Advanced settings</summary>
+          <div class="field">
+            <label for="too-close">Too close threshold (cm)</label>
+            <input type="number" id="too-close" value="40" min="5" max="200" />
+          </div>
+          <div class="field">
+            <label for="too-far">Too far threshold (cm)</label>
+            <input type="number" id="too-far" value="75" min="5" max="300" />
+          </div>
+          <div class="field">
+            <label for="iris-mm">Assumed iris diameter (mm)</label>
+            <input type="number" id="iris-mm" value="11.7" min="8" max="16" step="0.1" />
+          </div>
+          <button id="change-camera-btn" class="secondary">Change camera</button>
+        </details>
+
+        <p class="hint">Sit at the distance above, then press <kbd>c</kbd> or click Calibrate. Only needs to be done once — it's saved in this browser.</p>
+        <p class="fps" id="fps"></p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

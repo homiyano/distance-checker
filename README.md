@@ -1,10 +1,65 @@
 # Distance Checker
 
-Real-time webcam tool that watches how far you're sitting from your laptop
-screen and warns you if you're too close (or too far), using deep-learning
-face/iris tracking — no manual measuring, no special hardware.
+Real-time tool that watches how far you're sitting from your screen and
+warns you if you're too close (or too far), using deep-learning face/iris
+tracking — no manual measuring, no special hardware.
 
-## How it works
+Two versions live here:
+
+- **`web/` (recommended)** — runs entirely in your browser, camera capture
+  and all. Served via Docker so it's a one-command start.
+- **Python CLI (`main.py`)** — the original OpenCV/terminal version. Works,
+  but native camera access on macOS can get tangled up with Continuity
+  Camera/OBS virtual cameras (see its section below) in ways a browser's
+  own camera picker just doesn't run into.
+
+## Browser version (recommended)
+
+**How it works:** [MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker)
+— the same deep-learning model as the Python version, in its WebAssembly
+build — runs entirely client-side via `@mediapipe/tasks-vision`. Your webcam
+feed and every frame of inference stay in the browser; nothing is uploaded
+anywhere. Distance is estimated from iris size in pixels using the pinhole
+camera equation, exactly as described below in the Python section.
+
+### Run it
+
+```bash
+docker compose up --build
+```
+
+Then open **http://localhost:8080** in Chrome (or any modern browser).
+`localhost` counts as a secure context, so camera access works without HTTPS.
+
+1. Click **Start Camera** — the browser shows its own native camera
+   permission prompt (once per browser, not per run).
+2. If you have more than one camera (built-in, iPhone via Continuity
+   Camera, OBS virtual camera, etc.), a dropdown appears with each one's
+   real name, populated by the browser itself — pick the one you want. This
+   sidesteps the index-guessing problems native OpenCV camera access runs
+   into on macOS.
+3. Sit at the distance shown (default 50cm), click **Calibrate** (or press
+   `c`). This is a one-time step, saved in your browser's local storage.
+4. Watch the status card: **Good distance** / **Too close** / **Too far**,
+   color-coded, updated live.
+
+No Python, no venv, no native camera permission wrangling — just Docker +
+a browser tab.
+
+### Notes
+
+- Selecting your iPhone from the camera dropdown will still trigger its
+  Continuity Camera handoff confirmation on the phone — that's Apple's
+  behavior for that specific device, not this app. Pick your built-in
+  webcam from the dropdown to avoid it.
+- Calibration and threshold settings are stored per-browser
+  (`localStorage`), not shared with the Python version.
+
+---
+
+## Python CLI version
+
+### How it works
 
 - **MediaPipe Face Landmarker** (a neural network, Google's current
   production model, successor to the legacy FaceMesh solution) runs on every
@@ -23,7 +78,7 @@ face/iris tracking — no manual measuring, no special hardware.
 
   The calibration is saved to `calibration.json` so you only need to do it once.
 
-## Setup
+### Setup
 
 ```bash
 python3 -m venv .venv
@@ -34,7 +89,7 @@ pip install -r requirements.txt
 The face landmarker model (`models/face_landmarker.task`, ~3.7MB) is
 downloaded automatically on first run and cached locally.
 
-## Run
+### Run
 
 ```bash
 python main.py
@@ -70,7 +125,7 @@ python main.py --camera 1          # skip the picker menu, use this index direct
 python main.py --reset-calibration # ignore saved calibration.json on startup
 ```
 
-## Continuity Camera / OBS sending a prompt to your phone
+### Continuity Camera / OBS sending a prompt to your phone
 
 The picker menu (see above) only reads camera *metadata*, so just seeing the
 menu never touches your iPhone. But if you deliberately click/select the
@@ -87,7 +142,12 @@ match reality), `python main.py --list-cameras` probes indices 0-4 directly
 and saves a snapshot from each into `camera_probe/` — note this *does* open
 every device, including the iPhone, so it can trigger that prompt.
 
-## Notes
+If the app opens but every frame is black (no error, camera light never
+turns on), that's a stuck/misattributed macOS camera session more than
+anything this app controls — the browser version above avoids this whole
+class of problem because the browser manages the camera session itself.
+
+### Notes
 
 - Tested with `mediapipe==0.10.30`. Newer mediapipe (1.0.x) currently has a
   GPU/Metal service crash in the face-detection graph on Apple Silicon
