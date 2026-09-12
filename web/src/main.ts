@@ -10,18 +10,14 @@ import {
   distanceMmFromCalibration,
   calibrateFromMeasurement,
 } from "./calibration";
-import {
-  type PostureCalibration,
-  type HeadPose,
-  headPoseFromTransformationMatrix,
-  loadPostureCalibration,
-  savePostureCalibration,
-  clearPostureCalibration,
-  calibratePostureFromPose,
-  assessPosture,
-} from "./posture";
 import { SustainedStateTracker, SustainedEpisode } from "./alerts";
-import { alarmSoundEngine, type AlarmSoundId } from "./sound";
+import { AlarmSoundEngine, type AlarmSoundId } from "./sound";
+import {
+  PomodoroTimer,
+  type PomodoroPhase,
+  loadPomodoroSettings,
+  savePomodoroSettings,
+} from "./pomodoro";
 import { populateDeviceList, startStreamForDevice } from "./camera";
 
 const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
@@ -31,7 +27,7 @@ const THEME_KEY = "distance-checker:theme";
 
 type StatusKind = "ok" | "warn" | "bad";
 type SmoothedDistanceState = "close" | "far" | "good" | null;
-type SmoothedPostureState = "slouching" | "tilted" | "good" | null;
+type SmoothedPresenceState = "present" | "away" | null;
 type Theme = "light" | "dark";
 
 function el<T extends HTMLElement>(id: string): T {
@@ -79,20 +75,41 @@ const snoozeRemainingEl = el<HTMLElement>("snooze-remaining");
 const statusAnnouncer = el<HTMLElement>("status-announcer");
 const pipBtn = el<HTMLButtonElement>("pip-btn");
 
-// --- Posture checker ---
-const postureStatusCard = el<HTMLElement>("posture-status-card");
-const postureStatusText = el<HTMLElement>("posture-status-text");
-const postureAnnouncer = el<HTMLElement>("posture-status-announcer");
-const calibratePostureBtn = el<HTMLButtonElement>("calibrate-posture-btn");
-const resetPostureCalibBtn = el<HTMLButtonElement>("reset-posture-calib-btn");
-const postureSensitivityInput = el<HTMLInputElement>("posture-sensitivity");
+// --- Settings dialog ---
+const settingsBtn = el<HTMLButtonElement>("settings-btn");
+const settingsDialog = el<HTMLDialogElement>("settings-dialog");
 
-// --- Customizable alarm sound ---
+// --- Presence / away emergency alert ---
+const presenceStatusCard = el<HTMLElement>("presence-status-card");
+const presenceStatusText = el<HTMLElement>("presence-status-text");
+const presenceAnnouncer = el<HTMLElement>("presence-status-announcer");
+const enableAwayAlertInput = el<HTMLInputElement>("enable-away-alert");
+const awayThresholdInput = el<HTMLInputElement>("away-threshold-seconds");
+const emergencySoundSelect = el<HTMLSelectElement>("emergency-sound-select");
+const emergencyVolumeInput = el<HTMLInputElement>("emergency-volume");
+const emergencyRepeatSecondsInput = el<HTMLInputElement>("emergency-repeat-seconds");
+const testEmergencyBtn = el<HTMLButtonElement>("test-emergency-btn");
+
+// --- Customizable alarm sound (distance) ---
 const enableAlarmSoundInput = el<HTMLInputElement>("enable-alarm-sound");
 const alarmSoundSelect = el<HTMLSelectElement>("alarm-sound-select");
 const alarmVolumeInput = el<HTMLInputElement>("alarm-volume");
 const alarmRepeatSecondsInput = el<HTMLInputElement>("alarm-repeat-seconds");
 const testSoundBtn = el<HTMLButtonElement>("test-sound-btn");
+
+// --- Pomodoro focus timer ---
+const pomodoroEl = el<HTMLElement>("pomodoro");
+const pomodoroPhaseEl = el<HTMLElement>("pomodoro-phase");
+const pomodoroTimeEl = el<HTMLElement>("pomodoro-time");
+const pomodoroDotsEl = el<HTMLElement>("pomodoro-dots");
+const pomodoroStartBtn = el<HTMLButtonElement>("pomodoro-start-btn");
+const pomodoroSkipBtn = el<HTMLButtonElement>("pomodoro-skip-btn");
+const pomodoroResetBtn = el<HTMLButtonElement>("pomodoro-reset-btn");
+const focusMinutesInput = el<HTMLInputElement>("focus-minutes");
+const shortBreakMinutesInput = el<HTMLInputElement>("short-break-minutes");
+const longBreakMinutesInput = el<HTMLInputElement>("long-break-minutes");
+const cyclesBeforeLongBreakInput = el<HTMLInputElement>("cycles-before-long-break");
+const pomodoroAutoStartInput = el<HTMLInputElement>("pomodoro-auto-start");
 
 const videoWrapEl = document.querySelector<HTMLDivElement>(".video-wrap");
 if (!videoWrapEl) throw new Error("Missing .video-wrap");
@@ -101,22 +118,23 @@ const videoWrap: HTMLDivElement = videoWrapEl;
 let currentStream: MediaStream | null = null;
 let faceLandmarker: FaceLandmarker | null = null;
 let calibration: Calibration | null = loadCalibration();
-let postureCalibration: PostureCalibration | null = loadPostureCalibration();
 let latestIrisDiameterPx: number | null = null;
-let latestHeadPose: HeadPose | null = null;
 let fps = 0;
 let lastFrameTime = performance.now();
 let rafId: number | null = null;
 let backgroundTimerId: number | null = null;
 let lastAnnouncedKind: StatusKind | undefined;
-let lastAnnouncedPostureKind: StatusKind | undefined;
+let lastAnnouncedPresenceKind: StatusKind | undefined;
 const ORIGINAL_TITLE = document.title;
 
 // A background tab throttles/pauses requestAnimationFrame, but the webcam
 // stream itself keeps delivering frames — so while hidden we fall back to a
-// low-rate setTimeout loop instead, keeping distance/posture monitoring (and
-// therefore alerts) alive while the user works in another tab or app.
+// low-rate setTimeout loop instead, keeping distance/presence monitoring
+// (and therefore alerts) alive while the user works in another tab or app.
 const BACKGROUND_FRAME_INTERVAL_MS = 500;
+
+const alarmSoundEngine = new AlarmSoundEngine();
+const emergencyAlarmEngine = new AlarmSoundEngine();
 
 // --- Document Picture-in-Picture (floating window) ---
 interface DocumentPictureInPictureAPI {
@@ -129,7 +147,8 @@ const supportsDocumentPip = Boolean(documentPictureInPicture);
 
 let pipWindow: Window | null = null;
 let pipStatusEl: HTMLDivElement | null = null;
-let pipPostureEl: HTMLDivElement | null = null;
+let pipPresenceEl: HTMLDivElement | null = null;
+let pipPomodoroEl: HTMLDivElement | null = null;
 let pipPlaceholder: HTMLDivElement | null = null;
 
 if (pipBtn) pipBtn.hidden = !supportsDocumentPip;
@@ -146,20 +165,21 @@ const distanceHistory: DistanceSample[] = [];
 let lastSparklineSampleTime = 0;
 
 // --- Sustained-state smoothing + alerting (notifications / speech / sound) ---
-// Each channel (distance, posture) tracks its raw per-frame state separately
-// from the per-frame `setStatus`/`setPostureStatus` calls below, so the
+// Each channel (distance, presence) tracks its raw per-frame state separately
+// from the per-frame `setStatus`/`setPresenceStatus` calls below, so the
 // visible status cards keep reacting instantly while alerts only react to a
 // hysteresis-smoothed, sustained state.
 const STATE_HYSTERESIS_MS = 1500; // ~1.5s of consistent state before it "counts" as changed
 const SNOOZE_MS = 10 * 60 * 1000; // 10 minutes
 
 const distanceStateTracker = new SustainedStateTracker(STATE_HYSTERESIS_MS);
-const postureStateTracker = new SustainedStateTracker(STATE_HYSTERESIS_MS);
+const presenceStateTracker = new SustainedStateTracker(STATE_HYSTERESIS_MS);
 const distanceEpisode = new SustainedEpisode();
-const postureEpisode = new SustainedEpisode();
+const presenceEpisode = new SustainedEpisode();
 
 let snoozeUntil = 0;
-let soundAlarmActive = false;
+let distanceAlarmActive = false;
+let emergencyAlarmActive = false;
 let titleFlashOn = false;
 
 // --- Theme (light/dark) ---
@@ -193,6 +213,12 @@ themeToggleBtn?.addEventListener("click", () => {
 
 initTheme();
 
+// --- Settings dialog ---
+settingsBtn.addEventListener("click", () => settingsDialog.showModal());
+settingsDialog.addEventListener("click", (e) => {
+  if (e.target === settingsDialog) settingsDialog.close();
+});
+
 async function ensureFaceLandmarker(): Promise<FaceLandmarker> {
   if (faceLandmarker) return faceLandmarker;
   const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
@@ -200,7 +226,6 @@ async function ensureFaceLandmarker(): Promise<FaceLandmarker> {
     baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
     runningMode: "VIDEO",
     numFaces: 1,
-    outputFacialTransformationMatrixes: true,
   });
   return faceLandmarker;
 }
@@ -228,23 +253,23 @@ function setStatus(text: string, kind?: StatusKind): void {
   }
 }
 
-function setPostureStatus(text: string, kind?: StatusKind): void {
-  postureStatusText.textContent = text;
-  postureStatusCard.classList.remove("ok", "warn", "bad");
-  if (kind) postureStatusCard.classList.add(kind);
+function setPresenceStatus(text: string, kind?: StatusKind): void {
+  presenceStatusText.textContent = text;
+  presenceStatusCard.classList.remove("ok", "warn", "bad");
+  if (kind) presenceStatusCard.classList.add(kind);
 
-  if (kind !== lastAnnouncedPostureKind) {
-    lastAnnouncedPostureKind = kind;
-    if (postureAnnouncer) {
-      postureAnnouncer.setAttribute("aria-live", kind === "bad" ? "assertive" : "polite");
-      postureAnnouncer.textContent = text;
+  if (kind !== lastAnnouncedPresenceKind) {
+    lastAnnouncedPresenceKind = kind;
+    if (presenceAnnouncer) {
+      presenceAnnouncer.setAttribute("aria-live", kind === "bad" ? "assertive" : "polite");
+      presenceAnnouncer.textContent = text;
     }
   }
 
-  if (pipPostureEl) {
-    pipPostureEl.textContent = text;
-    pipPostureEl.classList.remove("ok", "warn", "bad");
-    if (kind) pipPostureEl.classList.add(kind);
+  if (pipPresenceEl) {
+    pipPresenceEl.textContent = text;
+    pipPresenceEl.classList.remove("ok", "warn", "bad");
+    if (kind) pipPresenceEl.classList.add(kind);
   }
 }
 
@@ -275,7 +300,8 @@ function onPipClosed(): void {
   }
   pipPlaceholder = null;
   pipStatusEl = null;
-  pipPostureEl = null;
+  pipPresenceEl = null;
+  pipPomodoroEl = null;
   pipWindow = null;
   if (pipBtn) {
     pipBtn.textContent = "Float window (PiP)";
@@ -286,7 +312,7 @@ function onPipClosed(): void {
 async function openPip(): Promise<void> {
   if (!documentPictureInPicture || pipWindow) return;
   try {
-    pipWindow = await documentPictureInPicture.requestWindow({ width: 340, height: 320 });
+    pipWindow = await documentPictureInPicture.requestWindow({ width: 340, height: 380 });
   } catch (err) {
     console.error("Picture-in-Picture failed:", errorMessage(err));
     pipWindow = null;
@@ -309,16 +335,21 @@ async function openPip(): Promise<void> {
     if (statusCard.classList.contains(kind)) pipStatusEl.classList.add(kind);
   }
 
-  pipPostureEl = document.createElement("div");
-  pipPostureEl.className = "status-card pip-status";
-  pipPostureEl.textContent = postureStatusText.textContent;
+  pipPresenceEl = document.createElement("div");
+  pipPresenceEl.className = "status-card pip-status";
+  pipPresenceEl.textContent = presenceStatusText.textContent;
   for (const kind of ["ok", "warn", "bad"] as const) {
-    if (postureStatusCard.classList.contains(kind)) pipPostureEl.classList.add(kind);
+    if (presenceStatusCard.classList.contains(kind)) pipPresenceEl.classList.add(kind);
   }
+
+  pipPomodoroEl = document.createElement("div");
+  pipPomodoroEl.className = "status-card pip-status pip-pomodoro";
+  pipPomodoroEl.textContent = `${pomodoroPhaseEl.textContent} ${pomodoroTimeEl.textContent}`;
 
   pipWindow.document.body.appendChild(videoWrap);
   pipWindow.document.body.appendChild(pipStatusEl);
-  pipWindow.document.body.appendChild(pipPostureEl);
+  pipWindow.document.body.appendChild(pipPresenceEl);
+  pipWindow.document.body.appendChild(pipPomodoroEl);
   pipWindow.addEventListener("pagehide", onPipClosed, { once: true });
 
   if (pipBtn) {
@@ -376,7 +407,7 @@ function drawSparkline(now: number): void {
   };
 
   // Guide lines for the too-close / too-far thresholds.
-  sparklineCtx.strokeStyle = "rgba(255,255,255,0.15)";
+  sparklineCtx.strokeStyle = "rgba(128,128,128,0.35)";
   sparklineCtx.lineWidth = 1;
   for (const threshold of [tooClose, tooFar]) {
     const y = yFor(threshold);
@@ -386,7 +417,8 @@ function drawSparkline(now: number): void {
     sparklineCtx.stroke();
   }
 
-  sparklineCtx.strokeStyle = "#ffb454";
+  const accentColor = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#ffffff";
+  sparklineCtx.strokeStyle = accentColor;
   sparklineCtx.lineWidth = 2;
   sparklineCtx.beginPath();
   distanceHistory.forEach((s, i) => {
@@ -452,19 +484,19 @@ function speak(text: string): void {
 
 // Drives one channel's sustained-episode logic: fires (at most once per
 // episode) a notification/speech alert once the smoothed state has been
-// continuously bad for the configured alert-after duration, and resets the
-// episode once the state returns to "good"/unknown. Returns whether this
-// channel is currently "alarming" (past the sustained threshold, unsnoozed).
+// continuously bad for `alertAfterMs`, and resets the episode once the state
+// returns to good/unknown. Returns whether this channel is currently
+// "alarming" (past the sustained threshold, unsnoozed).
 function driveChannelAlerts(
   card: HTMLElement,
   episode: SustainedEpisode,
   isBad: boolean,
   now: number,
+  alertAfterMs: number,
   notifyTitle: string,
   notifyBody: string,
   speechText: string
 ): boolean {
-  const alertAfterMs = Math.max(1, Number(alertAfterInput.value) || 15) * 1000;
   const snoozed = isSnoozed(now);
   const alarming = episode.update(isBad, now, alertAfterMs, snoozed, {
     onNotify: () => maybeNotify(notifyTitle, notifyBody),
@@ -474,22 +506,39 @@ function driveChannelAlerts(
   return alarming;
 }
 
-// Starts/stops the repeating customizable alarm sound as channels enter or
-// leave the "alarming" state, so it plays continuously while distance and/or
-// posture stay bad — including while the tab is backgrounded.
-function updateAlarmSound(shouldAlarm: boolean): void {
+// Starts/stops the repeating customizable alarm sound as the distance
+// channel enters or leaves the "alarming" state, so it plays continuously
+// while distance stays bad — including while the tab is backgrounded.
+function updateDistanceAlarm(shouldAlarm: boolean): void {
   const enabled = enableAlarmSoundInput.checked;
   if (shouldAlarm && enabled) {
-    if (!soundAlarmActive) {
-      soundAlarmActive = true;
+    if (!distanceAlarmActive) {
+      distanceAlarmActive = true;
       const sound = alarmSoundSelect.value as AlarmSoundId;
       const volume = Number(alarmVolumeInput.value) / 100;
       const intervalMs = Math.max(1, Number(alarmRepeatSecondsInput.value) || 20) * 1000;
       alarmSoundEngine.startRepeating(sound, volume, intervalMs);
     }
-  } else if (soundAlarmActive) {
-    soundAlarmActive = false;
+  } else if (distanceAlarmActive) {
+    distanceAlarmActive = false;
     alarmSoundEngine.stopRepeating();
+  }
+}
+
+// Same idea for the away/emergency channel, using its own engine/settings so
+// it can run independently (louder, faster-repeating) from the distance alarm.
+function updateEmergencyAlarm(shouldAlarm: boolean): void {
+  if (shouldAlarm) {
+    if (!emergencyAlarmActive) {
+      emergencyAlarmActive = true;
+      const sound = emergencySoundSelect.value as AlarmSoundId;
+      const volume = Number(emergencyVolumeInput.value) / 100;
+      const intervalMs = Math.max(1, Number(emergencyRepeatSecondsInput.value) || 5) * 1000;
+      emergencyAlarmEngine.startRepeating(sound, volume, intervalMs);
+    }
+  } else if (emergencyAlarmActive) {
+    emergencyAlarmActive = false;
+    emergencyAlarmEngine.stopRepeating();
   }
 }
 
@@ -498,7 +547,7 @@ function updateAlarmSound(shouldAlarm: boolean): void {
 function updateTitleFlash(anyAlarming: boolean): void {
   if (anyAlarming && document.hidden) {
     titleFlashOn = !titleFlashOn;
-    document.title = titleFlashOn ? "⚠️ Check your posture/distance" : ORIGINAL_TITLE;
+    document.title = titleFlashOn ? "⚠️ Distance Checker" : ORIGINAL_TITLE;
   } else if (document.title !== ORIGINAL_TITLE) {
     document.title = ORIGINAL_TITLE;
   }
@@ -522,6 +571,115 @@ function updateSnoozeUI(now: number): void {
     snoozeBtn.disabled = false;
   }
 }
+
+// --- Pomodoro focus timer ---
+const pomodoroSettings = loadPomodoroSettings();
+focusMinutesInput.value = String(pomodoroSettings.focusMinutes);
+shortBreakMinutesInput.value = String(pomodoroSettings.shortBreakMinutes);
+longBreakMinutesInput.value = String(pomodoroSettings.longBreakMinutes);
+cyclesBeforeLongBreakInput.value = String(pomodoroSettings.cyclesBeforeLongBreak);
+pomodoroAutoStartInput.checked = pomodoroSettings.autoStartNext;
+const pomodoroTimer = new PomodoroTimer(pomodoroSettings);
+
+function phaseLabel(phase: PomodoroPhase): string {
+  return phase === "focus" ? "Focus" : phase === "shortBreak" ? "Short Break" : "Long Break";
+}
+
+function formatCountdown(ms: number): string {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const mm = Math.floor(totalSec / 60);
+  const ss = totalSec % 60;
+  return `${mm}:${String(ss).padStart(2, "0")}`;
+}
+
+function renderPomodoroUI(): void {
+  pomodoroPhaseEl.textContent = phaseLabel(pomodoroTimer.phase);
+  pomodoroTimeEl.textContent = formatCountdown(pomodoroTimer.remainingMs);
+  pomodoroEl.classList.toggle("is-focus", pomodoroTimer.phase === "focus");
+  pomodoroEl.classList.toggle("is-break", pomodoroTimer.phase !== "focus");
+  pomodoroEl.classList.toggle("is-running", pomodoroTimer.running);
+  pomodoroStartBtn.textContent = pomodoroTimer.running ? "Pause" : "Start";
+
+  const cycles = Math.max(1, Number(cyclesBeforeLongBreakInput.value) || 4);
+  const doneInSet = pomodoroTimer.completedFocusCount % cycles;
+  pomodoroDotsEl.innerHTML = "";
+  for (let i = 0; i < cycles; i++) {
+    const dot = document.createElement("span");
+    dot.className = "pomodoro-dot" + (i < doneInSet ? " filled" : "");
+    pomodoroDotsEl.appendChild(dot);
+  }
+
+  if (pipPomodoroEl) {
+    pipPomodoroEl.textContent = `${pomodoroPhaseEl.textContent} ${pomodoroTimeEl.textContent}`;
+  }
+}
+
+function onPomodoroPhaseEnded(nextPhase: PomodoroPhase): void {
+  const title = "Pomodoro Timer";
+  if (nextPhase === "focus") {
+    maybeNotify(title, "Break's over — back to focus.");
+    speak("Break's over. Time to focus.");
+  } else if (nextPhase === "longBreak") {
+    maybeNotify(title, "Great work — take a long break.");
+    speak("Take a long break.");
+  } else {
+    maybeNotify(title, "Nice work — take a short break.");
+    speak("Take a short break.");
+  }
+  alarmSoundEngine.playOnce("chime", (Number(alarmVolumeInput.value) || 70) / 100);
+}
+
+pomodoroStartBtn.addEventListener("click", () => {
+  if (pomodoroTimer.running) pomodoroTimer.pause();
+  else pomodoroTimer.start();
+  renderPomodoroUI();
+});
+
+pomodoroResetBtn.addEventListener("click", () => {
+  pomodoroTimer.reset();
+  renderPomodoroUI();
+});
+
+pomodoroSkipBtn.addEventListener("click", () => {
+  const result = pomodoroTimer.skip();
+  if (result.nextPhase) onPomodoroPhaseEnded(result.nextPhase);
+  renderPomodoroUI();
+});
+
+function applyPomodoroSettingsFromInputs(): void {
+  const settings = {
+    focusMinutes: Math.max(1, Number(focusMinutesInput.value) || 25),
+    shortBreakMinutes: Math.max(1, Number(shortBreakMinutesInput.value) || 5),
+    longBreakMinutes: Math.max(1, Number(longBreakMinutesInput.value) || 15),
+    cyclesBeforeLongBreak: Math.max(1, Number(cyclesBeforeLongBreakInput.value) || 4),
+    autoStartNext: pomodoroAutoStartInput.checked,
+  };
+  pomodoroTimer.updateSettings(settings);
+  savePomodoroSettings(settings);
+  renderPomodoroUI();
+}
+
+for (const input of [
+  focusMinutesInput,
+  shortBreakMinutesInput,
+  longBreakMinutesInput,
+  cyclesBeforeLongBreakInput,
+  pomodoroAutoStartInput,
+]) {
+  input.addEventListener("change", applyPomodoroSettingsFromInputs);
+}
+
+let lastPomodoroTickAt = Date.now();
+setInterval(() => {
+  const now = Date.now();
+  const deltaMs = now - lastPomodoroTickAt;
+  lastPomodoroTickAt = now;
+  const result = pomodoroTimer.tick(deltaMs);
+  if (result.phaseEnded && result.nextPhase) onPomodoroPhaseEnded(result.nextPhase);
+  renderPomodoroUI();
+}, 1000);
+
+renderPomodoroUI();
 
 function scheduleNextFrame(): void {
   if (document.hidden) {
@@ -552,9 +710,8 @@ function renderLoop(): void {
   fpsEl.textContent = `FPS: ${fps.toFixed(0)}`;
 
   latestIrisDiameterPx = null;
-  latestHeadPose = null;
   let rawDistanceState: SmoothedDistanceState = null; // feeds sustained-alert smoothing only
-  let rawPostureState: SmoothedPostureState = null;
+  let rawPresenceState: SmoothedPresenceState = null;
 
   if (result.faceLandmarks && result.faceLandmarks.length > 0) {
     const landmarks = result.faceLandmarks[0];
@@ -564,6 +721,7 @@ function renderLoop(): void {
       canvas.height
     );
     latestIrisDiameterPx = diameter;
+    rawPresenceState = "present";
 
     if (showMeshToggle.checked) {
       drawFaceMesh(landmarks, canvas.width, canvas.height);
@@ -596,38 +754,14 @@ function renderLoop(): void {
       recordDistanceSample(now, null);
       setStatus(`Not calibrated — sit at ${calibDistanceInput.value}cm and press Calibrate`, "warn");
     }
-
-    const matrix = result.facialTransformationMatrixes?.[0];
-    if (matrix) {
-      latestHeadPose = headPoseFromTransformationMatrix(matrix.data);
-    }
-
-    if (latestHeadPose && postureCalibration) {
-      const sensitivityDeg = Math.max(1, Number(postureSensitivityInput.value) || 8);
-      const assessment = assessPosture(latestHeadPose, postureCalibration, sensitivityDeg);
-      if (assessment.issue === "slouching") {
-        setPostureStatus("Slouching — sit up straight", "bad");
-        rawPostureState = "slouching";
-      } else if (assessment.issue === "tilted") {
-        setPostureStatus("Head tilted — straighten up", "warn");
-        rawPostureState = "tilted";
-      } else {
-        setPostureStatus("Good posture", "ok");
-        rawPostureState = "good";
-      }
-    } else if (latestHeadPose) {
-      setPostureStatus("Not calibrated — sit up straight and press Calibrate posture", "warn");
-    } else {
-      setPostureStatus("Posture data unavailable", "warn");
-    }
   } else {
     recordDistanceSample(now, null);
     setStatus("No face detected", "bad");
-    setPostureStatus("No face detected", "bad");
+    rawPresenceState = "away";
   }
 
   const smoothedDistance = distanceStateTracker.update(rawDistanceState, now);
-  const smoothedPosture = postureStateTracker.update(rawPostureState, now);
+  const smoothedPresence = presenceStateTracker.update(rawPresenceState, now);
 
   const distanceIsBad = smoothedDistance === "close" || smoothedDistance === "far";
   const distanceAlarming = driveChannelAlerts(
@@ -635,29 +769,44 @@ function renderLoop(): void {
     distanceEpisode,
     distanceIsBad,
     now,
+    Math.max(1, Number(alertAfterInput.value) || 15) * 1000,
     "Distance Checker",
     smoothedDistance === "close"
       ? "You've been sitting too close for a while"
       : "You've been sitting too far for a while",
     smoothedDistance === "close" ? "You're sitting too close" : "You're sitting too far away"
   );
+  updateDistanceAlarm(distanceAlarming);
 
-  const postureIsBad = smoothedPosture === "slouching" || smoothedPosture === "tilted";
-  const postureAlarming = driveChannelAlerts(
-    postureStatusCard,
-    postureEpisode,
-    postureIsBad,
+  // Away/emergency tracking only applies during an active, running Focus
+  // session — stepping away on a break, or with the timer paused, is fine.
+  const trackingActive =
+    enableAwayAlertInput.checked && pomodoroTimer.phase === "focus" && pomodoroTimer.running;
+  const presenceIsBad = trackingActive && smoothedPresence === "away";
+  const awayThresholdMs = Math.max(1, Number(awayThresholdInput.value) || 10) * 1000;
+  const presenceAlarming = driveChannelAlerts(
+    presenceStatusCard,
+    presenceEpisode,
+    presenceIsBad,
     now,
-    "Posture Checker",
-    smoothedPosture === "slouching"
-      ? "You've been slouching for a while"
-      : "Your head has been tilted for a while",
-    smoothedPosture === "slouching" ? "Sit up straight" : "Straighten your head"
+    awayThresholdMs,
+    "Focus Timer",
+    "You've been away from your desk during a focus session",
+    "Emergency. Get back to your desk."
   );
+  updateEmergencyAlarm(presenceAlarming);
 
-  const anyAlarming = distanceAlarming || postureAlarming;
-  lastAnyAlarming = anyAlarming;
-  updateAlarmSound(anyAlarming);
+  if (!trackingActive) {
+    setPresenceStatus("Away tracking paused — start a Focus session", undefined);
+  } else if (smoothedPresence === "present") {
+    setPresenceStatus("Present", "ok");
+  } else if (presenceAlarming) {
+    setPresenceStatus("⚠️ Away during focus — emergency alarm", "bad");
+  } else {
+    setPresenceStatus("You stepped away…", "warn");
+  }
+
+  lastAnyAlarming = distanceAlarming || presenceAlarming;
 }
 
 function doCalibrate(): void {
@@ -679,30 +828,14 @@ function doResetCalibration(): void {
   setStatus("Calibration cleared", "warn");
 }
 
-function doCalibratePosture(): void {
-  if (!latestHeadPose) {
-    setPostureStatus("Can't calibrate — no face detected right now", "bad");
-    return;
-  }
-  const cal = calibratePostureFromPose(latestHeadPose);
-  postureCalibration = cal;
-  savePostureCalibration(cal);
-  speak("Posture calibrated");
-}
-
-function doResetPostureCalibration(): void {
-  postureCalibration = null;
-  clearPostureCalibration();
-  setPostureStatus("Posture calibration cleared", "warn");
-}
-
 startBtn.addEventListener("click", async () => {
   startBtn.disabled = true;
   startBtn.textContent = "Requesting camera…";
   try {
-    // Unlock the AudioContext here (a user gesture) so the alarm sound can
-    // play later even when triggered from a background tab/timer.
+    // Unlock both AudioContexts here (a user gesture) so alarms can play
+    // later even when triggered from a background tab/timer.
     alarmSoundEngine.unlock();
+    emergencyAlarmEngine.unlock();
     // First grant unlocks device labels for enumerateDevices().
     currentStream = await startStreamForDevice(video, currentStream, null);
     const activeStream = currentStream;
@@ -749,13 +882,12 @@ deviceSelect.addEventListener("change", async () => {
 
 changeCameraBtn.addEventListener("click", () => {
   deviceField.hidden = false;
+  settingsDialog.close();
   deviceField.scrollIntoView({ behavior: "smooth", block: "center" });
 });
 
 calibrateBtn.addEventListener("click", doCalibrate);
 resetCalibBtn.addEventListener("click", doResetCalibration);
-calibratePostureBtn.addEventListener("click", doCalibratePosture);
-resetPostureCalibBtn.addEventListener("click", doResetPostureCalibration);
 
 testSoundBtn.addEventListener("click", () => {
   alarmSoundEngine.unlock();
@@ -764,12 +896,21 @@ testSoundBtn.addEventListener("click", () => {
   alarmSoundEngine.playOnce(sound, volume);
 });
 
+testEmergencyBtn.addEventListener("click", () => {
+  emergencyAlarmEngine.unlock();
+  const sound = emergencySoundSelect.value as AlarmSoundId;
+  const volume = Number(emergencyVolumeInput.value) / 100;
+  emergencyAlarmEngine.playOnce(sound, volume);
+});
+
 snoozeBtn.addEventListener("click", () => {
   snoozeUntil = performance.now() + SNOOZE_MS;
   updateSnoozeUI(performance.now());
   // Silence immediately rather than waiting for the next detection frame.
-  soundAlarmActive = false;
+  distanceAlarmActive = false;
   alarmSoundEngine.stopRepeating();
+  emergencyAlarmActive = false;
+  emergencyAlarmEngine.stopRepeating();
 });
 
 // Independent of the render loop so the countdown keeps ticking even before
@@ -779,6 +920,7 @@ updateSnoozeUI(performance.now());
 
 window.addEventListener("keydown", (e) => {
   if (stage.hidden) return;
+  if (settingsDialog.open) return;
   // Don't hijack keystrokes while the user is typing into a form control.
   const active = document.activeElement;
   const tag = active?.tagName;
@@ -788,6 +930,4 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "c") doCalibrate();
   if (e.key === "r") doResetCalibration();
-  if (e.key === "p") doCalibratePosture();
-  if (e.key === "o") doResetPostureCalibration();
 });

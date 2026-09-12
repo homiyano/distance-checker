@@ -10,9 +10,9 @@ export default defineConfig({
         name: "Distance Checker",
         short_name: "Distance",
         description:
-          "Real-time webcam distance and posture tracking with on-device deep learning (MediaPipe Face Landmarker), runs entirely in your browser.",
-        theme_color: "#14120f",
-        background_color: "#14120f",
+          "Real-time webcam distance tracking and a Pomodoro focus timer with an away-emergency alert, powered by on-device deep learning (MediaPipe Face Landmarker) — runs entirely in your browser.",
+        theme_color: "#000000",
+        background_color: "#000000",
         display: "standalone",
         start_url: "/",
         icons: [

@@ -1,27 +1,29 @@
 :root {
-  --bg: #14120f;
-  --panel: #1f1c18;
-  --card: #2a2620;
-  --border: #3a352c;
-  --text: #f0ede6;
-  --muted: #9a9488;
-  --accent: #ffb454;
-  --ok: #5fd97f;
-  --warn: #4db4ff;
-  --bad: #ff5f6d;
+  --bg: #000000;
+  --panel: #0a0a0a;
+  --card: #121212;
+  --border: #2a2a2a;
+  --text: #f2f2f2;
+  --muted: #8a8a8a;
+  --accent: #ffffff;
+  --accent-contrast: #000000;
+  --ok: #3ddc84;
+  --warn: #e8b93f;
+  --bad: #ff5c5c;
 }
 
 [data-theme="light"] {
-  --bg: #f5f3ee;
-  --panel: #ffffff;
-  --card: #eeebe3;
-  --border: #dcd6c8;
-  --text: #211d16;
-  --muted: #6c6455;
-  --accent: #b1600f;
-  --ok: #1a8f4e;
-  --warn: #0d6fb8;
-  --bad: #c62839;
+  --bg: #ffffff;
+  --panel: #fafafa;
+  --card: #f2f2f2;
+  --border: #e0e0e0;
+  --text: #0a0a0a;
+  --muted: #6b6b6b;
+  --accent: #000000;
+  --accent-contrast: #ffffff;
+  --ok: #16803c;
+  --warn: #93650c;
+  --bad: #b91c1c;
 }
 
 * { box-sizing: border-box; }
@@ -64,7 +66,13 @@ header {
   gap: 12px;
 }
 
-.theme-toggle {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
   flex: 0 0 auto;
   padding: 6px 10px;
   border-radius: 10px;
@@ -76,6 +84,7 @@ header {
 h1 {
   margin: 0 0 6px;
   font-size: 1.6rem;
+  letter-spacing: -0.01em;
 }
 
 .subtitle {
@@ -112,7 +121,7 @@ button {
 
 button.primary {
   background: var(--accent);
-  color: #1a1508;
+  color: var(--accent-contrast);
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -121,7 +130,8 @@ button.secondary {
   background: transparent;
 }
 
-button:hover { filter: brightness(1.1); }
+button:hover { filter: brightness(1.2); }
+[data-theme="light"] button:hover { filter: brightness(0.96); }
 
 .field {
   display: flex;
@@ -151,12 +161,12 @@ input[type="range"] {
 
 .privacy-note {
   color: var(--text);
-  opacity: 0.85;
+  opacity: 0.7;
 }
 
 .stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 20px;
   margin-top: 20px;
 }
@@ -242,13 +252,6 @@ input[type="range"] {
   font-size: 0.85rem;
 }
 
-details summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 0.85rem;
-  margin: 4px 0;
-}
-
 .hint {
   font-size: 0.8rem;
   color: var(--muted);
@@ -304,6 +307,65 @@ kbd {
   font-size: 0.85em;
 }
 
+/* --- Pomodoro focus timer --- */
+.pomodoro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.pomodoro-phase {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.pomodoro.is-focus .pomodoro-phase {
+  color: var(--text);
+}
+
+.pomodoro-time {
+  font-size: 2.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.pomodoro-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.pomodoro-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.pomodoro-dot.filled {
+  background: var(--accent);
+}
+
+.pomodoro-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.pomodoro-controls button {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+}
+
 /* --- Setup -> live view transition (progressively enhanced) --- */
 ::view-transition-old(root),
 ::view-transition-new(root) {
@@ -351,4 +413,72 @@ body.pip-body {
 
 .pip-status {
   margin: 8px 0 0;
+}
+
+.pip-pomodoro {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Settings dialog (the customization system) --- */
+#settings-dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 0;
+  width: min(480px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 64px));
+}
+
+#settings-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px;
+  max-height: min(720px, calc(100vh - 64px));
+  overflow-y: auto;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: -20px;
+  background: var(--panel);
+  margin: -20px -20px 0;
+  padding: 20px 20px 8px;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}
+
+legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.settings-btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }

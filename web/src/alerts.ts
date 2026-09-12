@@ -1,4 +1,4 @@
-// Generic sustained-state alerting, shared by the distance and posture
+// Generic sustained-state alerting, shared by the distance and presence/away
 // channels: a raw per-frame state is first hysteresis-smoothed (so brief
 // flickers don't count), then tracked as an "episode" that only fires its
 // callbacks once it has stayed bad continuously for a configured duration.

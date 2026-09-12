@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#14120f" />
+  <meta name="theme-color" content="#000000" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <title>Distance Checker</title>
   <script>
@@ -25,9 +25,12 @@
   <header>
     <div class="header-row">
       <h1>Distance Checker</h1>
-      <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">🌙</button>
+      <div class="header-actions">
+        <button id="settings-btn" class="icon-btn" type="button" title="Settings" aria-label="Open settings">⚙</button>
+        <button id="theme-toggle" class="icon-btn" type="button" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">🌙</button>
+      </div>
     </div>
-    <p class="subtitle">Real-time webcam distance &amp; posture tracking with on-device deep learning (MediaPipe Face Landmarker, runs entirely in your browser)</p>
+    <p class="subtitle">Distance &amp; focus tracking with on-device deep learning (MediaPipe Face Landmarker) — runs entirely in your browser</p>
   </header>
 
   <main>
@@ -52,9 +55,20 @@
           <span id="status-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
 
-        <div class="status-card" id="posture-status-card">
-          <span id="posture-status-text">Waiting for face…</span>
-          <span id="posture-status-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
+        <div class="status-card" id="presence-status-card">
+          <span id="presence-status-text">Away tracking paused</span>
+          <span id="presence-status-announcer" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></span>
+        </div>
+
+        <div class="pomodoro" id="pomodoro">
+          <div class="pomodoro-phase" id="pomodoro-phase">Focus</div>
+          <div class="pomodoro-time" id="pomodoro-time">25:00</div>
+          <div class="pomodoro-dots" id="pomodoro-dots" aria-hidden="true"></div>
+          <div class="pomodoro-controls">
+            <button id="pomodoro-start-btn" class="primary">Start</button>
+            <button id="pomodoro-skip-btn" class="secondary">Skip</button>
+            <button id="pomodoro-reset-btn" class="secondary">Reset</button>
+          </div>
         </div>
 
         <div class="sparkline-wrap">
@@ -67,84 +81,147 @@
           <span id="snooze-remaining" class="hint" hidden></span>
         </div>
 
-        <div class="field">
-          <label for="calib-distance">Calibration distance (cm)</label>
-          <input type="number" id="calib-distance" value="50" min="10" max="200" />
-        </div>
-        <button id="calibrate-btn">Calibrate at this distance (c)</button>
-        <button id="reset-calib-btn" class="secondary">Reset calibration (r)</button>
-
-        <button id="calibrate-posture-btn">Calibrate good posture (p)</button>
-        <button id="reset-posture-calib-btn" class="secondary">Reset posture calibration (o)</button>
-        <p class="hint">Sit up straight and look forward, then press <kbd>p</kbd> to set your good-posture baseline. Posture is detected from your head's angle relative to that baseline.</p>
-        <p class="hint privacy-note">🔒 Distance and posture are estimated entirely on-device from your camera — no video, images, or measurements ever leave this browser.</p>
-
-        <details>
-          <summary>Advanced settings</summary>
-          <div class="field">
-            <label for="too-close">Too close threshold (cm)</label>
-            <input type="number" id="too-close" value="40" min="5" max="200" />
-          </div>
-          <div class="field">
-            <label for="too-far">Too far threshold (cm)</label>
-            <input type="number" id="too-far" value="75" min="5" max="300" />
-          </div>
-          <div class="field">
-            <label for="iris-mm">Assumed iris diameter (mm)</label>
-            <input type="number" id="iris-mm" value="11.7" min="8" max="16" step="0.1" />
-          </div>
-          <div class="field field-checkbox">
-            <label for="show-mesh-toggle">
-              <input type="checkbox" id="show-mesh-toggle" />
-              Show face mesh wireframe
-            </label>
-          </div>
-          <div class="field">
-            <label for="posture-sensitivity">Posture sensitivity (degrees off baseline)</label>
-            <input type="number" id="posture-sensitivity" value="8" min="2" max="45" step="1" />
-          </div>
-          <div class="field">
-            <label for="alert-after-seconds">Alert after sustained (seconds)</label>
-            <input type="number" id="alert-after-seconds" value="15" min="1" max="300" />
-          </div>
-          <div class="field checkbox-field">
-            <label><input type="checkbox" id="enable-notifications" /> Enable browser notifications</label>
-          </div>
-          <div class="field checkbox-field">
-            <label><input type="checkbox" id="speak-alerts" /> Speak alerts (distance &amp; posture)</label>
-          </div>
-
-          <div class="field checkbox-field">
-            <label><input type="checkbox" id="enable-alarm-sound" checked /> Play alarm sound while sustained</label>
-          </div>
-          <div class="field">
-            <label for="alarm-sound-select">Alarm sound</label>
-            <select id="alarm-sound-select">
-              <option value="chime">Chime</option>
-              <option value="beep" selected>Beep</option>
-              <option value="urgent">Urgent</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="alarm-volume">Alarm volume</label>
-            <input type="range" id="alarm-volume" min="0" max="100" value="70" />
-          </div>
-          <div class="field">
-            <label for="alarm-repeat-seconds">Repeat alarm every (seconds)</label>
-            <input type="number" id="alarm-repeat-seconds" value="20" min="5" max="300" />
-          </div>
-          <button id="test-sound-btn" class="secondary" type="button">Test alarm sound</button>
-          <p class="hint">Monitoring keeps running — and alerts keep firing — even while you're working in another tab or app; only the live video preview pauses its redraw.</p>
-
-          <button id="change-camera-btn" class="secondary">Change camera</button>
-        </details>
-
-        <p class="hint">Sit at the distance above, then press <kbd>c</kbd> or click Calibrate. Only needs to be done once — it's saved in this browser.</p>
-        <button id="pip-btn" class="secondary" aria-pressed="false" title="Show the live camera feed and distance status in an always-on-top floating window" hidden>Float window (PiP)</button>
+        <button id="pip-btn" class="secondary" aria-pressed="false" title="Show the live camera feed and status in an always-on-top floating window" hidden>Float window (PiP)</button>
         <p class="fps" id="fps"></p>
       </div>
     </section>
   </main>
+
+  <dialog id="settings-dialog">
+    <form method="dialog" class="settings-form">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button type="submit" class="icon-btn" aria-label="Close settings">✕</button>
+      </div>
+
+      <fieldset>
+        <legend>Distance</legend>
+        <div class="field">
+          <label for="calib-distance">Calibration distance (cm)</label>
+          <input type="number" id="calib-distance" value="50" min="10" max="200" />
+        </div>
+        <div class="settings-btn-row">
+          <button id="calibrate-btn" type="button">Calibrate (c)</button>
+          <button id="reset-calib-btn" type="button" class="secondary">Reset (r)</button>
+        </div>
+        <div class="field">
+          <label for="too-close">Too close threshold (cm)</label>
+          <input type="number" id="too-close" value="40" min="5" max="200" />
+        </div>
+        <div class="field">
+          <label for="too-far">Too far threshold (cm)</label>
+          <input type="number" id="too-far" value="75" min="5" max="300" />
+        </div>
+        <div class="field">
+          <label for="iris-mm">Assumed iris diameter (mm)</label>
+          <input type="number" id="iris-mm" value="11.7" min="8" max="16" step="0.1" />
+        </div>
+        <div class="field field-checkbox">
+          <label for="show-mesh-toggle">
+            <input type="checkbox" id="show-mesh-toggle" />
+            Show face mesh wireframe
+          </label>
+        </div>
+        <div class="field">
+          <label for="alert-after-seconds">Alert after sustained (seconds)</label>
+          <input type="number" id="alert-after-seconds" value="15" min="1" max="300" />
+        </div>
+        <button id="change-camera-btn" type="button" class="secondary">Change camera</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Pomodoro focus timer</legend>
+        <div class="field">
+          <label for="focus-minutes">Focus length (minutes)</label>
+          <input type="number" id="focus-minutes" value="25" min="1" max="180" />
+        </div>
+        <div class="field">
+          <label for="short-break-minutes">Short break (minutes)</label>
+          <input type="number" id="short-break-minutes" value="5" min="1" max="60" />
+        </div>
+        <div class="field">
+          <label for="long-break-minutes">Long break (minutes)</label>
+          <input type="number" id="long-break-minutes" value="15" min="1" max="90" />
+        </div>
+        <div class="field">
+          <label for="cycles-before-long-break">Focus sessions before long break</label>
+          <input type="number" id="cycles-before-long-break" value="4" min="1" max="12" />
+        </div>
+        <div class="field field-checkbox">
+          <label for="pomodoro-auto-start">
+            <input type="checkbox" id="pomodoro-auto-start" checked />
+            Auto-start the next session
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Away emergency alert</legend>
+        <p class="hint">While a Focus session is running, sound an emergency alarm if you're not in front of the webcam.</p>
+        <div class="field field-checkbox">
+          <label for="enable-away-alert">
+            <input type="checkbox" id="enable-away-alert" checked />
+            Enable away alert during Focus
+          </label>
+        </div>
+        <div class="field">
+          <label for="away-threshold-seconds">Away for (seconds) before alarm</label>
+          <input type="number" id="away-threshold-seconds" value="10" min="3" max="120" />
+        </div>
+        <div class="field">
+          <label for="emergency-sound-select">Emergency sound</label>
+          <select id="emergency-sound-select">
+            <option value="siren" selected>Siren</option>
+            <option value="urgent">Urgent beeps</option>
+            <option value="beep">Beep</option>
+            <option value="chime">Chime</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="emergency-volume">Emergency volume</label>
+          <input type="range" id="emergency-volume" min="0" max="100" value="85" />
+        </div>
+        <div class="field">
+          <label for="emergency-repeat-seconds">Repeat every (seconds)</label>
+          <input type="number" id="emergency-repeat-seconds" value="5" min="2" max="60" />
+        </div>
+        <button id="test-emergency-btn" type="button" class="secondary">Test emergency sound</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Alerts &amp; sound</legend>
+        <div class="field checkbox-field">
+          <label><input type="checkbox" id="enable-notifications" /> Enable browser notifications</label>
+        </div>
+        <div class="field checkbox-field">
+          <label><input type="checkbox" id="speak-alerts" /> Speak alerts</label>
+        </div>
+        <div class="field checkbox-field">
+          <label><input type="checkbox" id="enable-alarm-sound" checked /> Play alarm sound while sustained</label>
+        </div>
+        <div class="field">
+          <label for="alarm-sound-select">Alarm sound</label>
+          <select id="alarm-sound-select">
+            <option value="chime">Chime</option>
+            <option value="beep" selected>Beep</option>
+            <option value="urgent">Urgent</option>
+            <option value="siren">Siren</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="alarm-volume">Alarm volume</label>
+          <input type="range" id="alarm-volume" min="0" max="100" value="70" />
+        </div>
+        <div class="field">
+          <label for="alarm-repeat-seconds">Repeat every (seconds)</label>
+          <input type="number" id="alarm-repeat-seconds" value="20" min="5" max="300" />
+        </div>
+        <button id="test-sound-btn" type="button" class="secondary">Test alarm sound</button>
+      </fieldset>
+
+      <p class="hint privacy-note">🔒 Everything is estimated on-device from your camera — nothing leaves this browser.</p>
+    </form>
+  </dialog>
 
   <script type="module" src="/src/main.ts"></script>
 </body>

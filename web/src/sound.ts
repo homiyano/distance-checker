@@ -3,7 +3,7 @@
 // the alarm keeps sounding even if the tab is in the background or the user
 // is working in another app.
 
-export type AlarmSoundId = "chime" | "beep" | "urgent";
+export type AlarmSoundId = "chime" | "beep" | "urgent" | "siren";
 
 interface Tone {
   freq: number;
@@ -23,9 +23,15 @@ const PATTERNS: Record<AlarmSoundId, Tone[]> = {
     { freq: 1046, startMs: 150, durationMs: 110, type: "square" },
     { freq: 1046, startMs: 300, durationMs: 110, type: "square" },
   ],
+  siren: [
+    { freq: 800, startMs: 0, durationMs: 160, type: "sawtooth" },
+    { freq: 1200, startMs: 160, durationMs: 160, type: "sawtooth" },
+    { freq: 800, startMs: 320, durationMs: 160, type: "sawtooth" },
+    { freq: 1200, startMs: 480, durationMs: 160, type: "sawtooth" },
+  ],
 };
 
-class AlarmSoundEngine {
+export class AlarmSoundEngine {
   private ctx: AudioContext | null = null;
   private repeatTimerId: number | null = null;
 
@@ -89,5 +95,3 @@ class AlarmSoundEngine {
     return this.repeatTimerId !== null;
   }
 }
-
-export const alarmSoundEngine = new AlarmSoundEngine();
