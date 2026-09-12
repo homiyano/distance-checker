@@ -34,6 +34,11 @@ const sparklineCanvas = el("distance-sparkline");
 const sparklineCtx = sparklineCanvas.getContext("2d");
 const showMeshToggle = el("show-mesh-toggle");
 const themeToggleBtn = el("theme-toggle");
+const alertAfterInput = el("alert-after-seconds");
+const enableNotificationsInput = el("enable-notifications");
+const speakAlertsInput = el("speak-alerts");
+const snoozeBtn = el("snooze-btn");
+const snoozeRemainingEl = el("snooze-remaining");
 
 let currentStream = null;
 let faceLandmarker = null;
@@ -49,6 +54,23 @@ const SPARKLINE_UPDATE_INTERVAL_MS = 100;
 const SPARKLINE_MAX_SAMPLES = Math.ceil(SPARKLINE_WINDOW_MS / SPARKLINE_UPDATE_INTERVAL_MS);
 const distanceHistory = []; // { t: performance.now(), distanceCm: number|null }
 let lastSparklineSampleTime = 0;
+
+// --- Sustained-state smoothing + alerting (notifications / speech) ---
+// This tracks the distance state ("close" / "far" / "good" / null) separately
+// from the per-frame `setStatus` calls below, so the visible status card keeps
+// reacting instantly (unchanged behavior) while alerts only react to a
+// hysteresis-smoothed, sustained state.
+const STATE_HYSTERESIS_MS = 1500; // ~1.5s of consistent state before it "counts" as changed
+const SNOOZE_MS = 10 * 60 * 1000; // 10 minutes
+
+let rawPendingState = null;
+let rawPendingSince = 0;
+let smoothedState = null; // "close" | "far" | "good" | null
+
+let sustainedSince = null; // when smoothedState most recently became "close"/"far"
+let episodeNotified = false;
+let episodeSpoken = false;
+let snoozeUntil = 0;
 
 function loadCalibration() {
   try {
@@ -309,6 +331,108 @@ function drawFaceMesh(landmarks, w, h) {
   ctx.stroke();
 }
 
+function isSnoozed(now) {
+  return now < snoozeUntil;
+}
+
+// Hysteresis: only adopt a new raw state once it has been reported
+// consistently for STATE_HYSTERESIS_MS, so brief flickers (e.g. leaning
+// forward for a split second) don't trigger alert logic.
+function updateSmoothedState(rawState, now) {
+  if (rawState !== rawPendingState) {
+    rawPendingState = rawState;
+    rawPendingSince = now;
+  }
+  if (smoothedState === null) {
+    smoothedState = rawState;
+  } else if (rawState !== smoothedState && now - rawPendingSince >= STATE_HYSTERESIS_MS) {
+    smoothedState = rawState;
+  }
+  return smoothedState;
+}
+
+function maybeNotify(title, body) {
+  if (!enableNotificationsInput.checked) return;
+  if (typeof Notification === "undefined") return;
+  try {
+    if (Notification.permission === "granted") {
+      new Notification(title, { body });
+    } else if (Notification.permission !== "denied") {
+      Notification.requestPermission().then((perm) => {
+        if (perm === "granted") new Notification(title, { body });
+      });
+    }
+  } catch (err) {
+    console.warn("Notification failed", err);
+  }
+}
+
+function speak(text) {
+  if (!speakAlertsInput.checked) return;
+  if (typeof window.speechSynthesis === "undefined" || typeof SpeechSynthesisUtterance === "undefined") return;
+  try {
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  } catch (err) {
+    console.warn("Speech synthesis failed", err);
+  }
+}
+
+// Drives the sustained-episode logic: fires (at most once per episode) a
+// notification/speech alert once the smoothed state has been "close" or
+// "far" continuously for the configured alert-after duration, and resets
+// the episode once the state returns to "good"/unknown.
+function handleSustainedAlerts(state, now) {
+  const isBad = state === "close" || state === "far";
+  if (!isBad) {
+    sustainedSince = null;
+    episodeNotified = false;
+    episodeSpoken = false;
+    statusCard.classList.remove("sustained");
+    return;
+  }
+
+  if (sustainedSince === null) sustainedSince = now;
+  const sustainedMs = now - sustainedSince;
+  const alertAfterMs = Math.max(1, Number(alertAfterInput.value) || 15) * 1000;
+  const snoozed = isSnoozed(now);
+
+  statusCard.classList.toggle("sustained", sustainedMs >= alertAfterMs && !snoozed);
+
+  if (sustainedMs < alertAfterMs || snoozed) return;
+
+  const notifyMessage =
+    state === "close"
+      ? "You've been sitting too close for a while"
+      : "You've been sitting too far for a while";
+  const speechMessage = state === "close" ? "You're sitting too close" : "You're sitting too far away";
+
+  if (!episodeNotified) {
+    episodeNotified = true;
+    maybeNotify("Distance Checker", notifyMessage);
+  }
+  if (!episodeSpoken) {
+    episodeSpoken = true;
+    speak(speechMessage);
+  }
+}
+
+function updateSnoozeUI(now) {
+  const remainingMs = snoozeUntil - now;
+  if (remainingMs > 0) {
+    const remainingSec = Math.ceil(remainingMs / 1000);
+    const mm = Math.floor(remainingSec / 60);
+    const ss = remainingSec % 60;
+    snoozeRemainingEl.textContent = `Snoozed ${mm}:${String(ss).padStart(2, "0")}`;
+    snoozeRemainingEl.hidden = false;
+    snoozeBtn.textContent = "Snoozing…";
+    snoozeBtn.disabled = true;
+  } else {
+    snoozeRemainingEl.hidden = true;
+    snoozeBtn.textContent = "Snooze alerts (10 min)";
+    snoozeBtn.disabled = false;
+  }
+}
+
 function renderLoop() {
   rafId = requestAnimationFrame(renderLoop);
   if (video.readyState < 2) return;
@@ -328,6 +452,7 @@ function renderLoop() {
   fpsEl.textContent = `FPS: ${fps.toFixed(0)}`;
 
   latestIrisDiameterPx = null;
+  let rawState = null; // "close" | "far" | "good" | null — feeds sustained-alert smoothing only
 
   if (result.faceLandmarks && result.faceLandmarks.length > 0) {
     const landmarks = result.faceLandmarks[0];
@@ -357,10 +482,13 @@ function renderLoop() {
       recordDistanceSample(now, distanceCm);
       if (distanceCm < tooClose) {
         setStatus(`Too close (${distanceCm.toFixed(0)} cm)`, "bad");
+        rawState = "close";
       } else if (distanceCm > tooFar) {
         setStatus(`Too far (${distanceCm.toFixed(0)} cm)`, "warn");
+        rawState = "far";
       } else {
         setStatus(`Good distance (${distanceCm.toFixed(0)} cm)`, "ok");
+        rawState = "good";
       }
     } else {
       recordDistanceSample(now, null);
@@ -370,6 +498,9 @@ function renderLoop() {
     recordDistanceSample(now, null);
     setStatus("No face detected", "bad");
   }
+
+  const smoothed = updateSmoothedState(rawState, now);
+  handleSustainedAlerts(smoothed, now);
 }
 
 function doCalibrate() {
@@ -381,6 +512,7 @@ function doCalibrate() {
   const irisMm = Number(irisMmInput.value);
   const cal = calibrateFromMeasurement(knownDistanceMm, latestIrisDiameterPx, irisMm);
   saveCalibration(cal);
+  speak("Calibrated");
 }
 
 function doResetCalibration() {
@@ -438,6 +570,16 @@ changeCameraBtn.addEventListener("click", () => {
 
 calibrateBtn.addEventListener("click", doCalibrate);
 resetCalibBtn.addEventListener("click", doResetCalibration);
+
+snoozeBtn.addEventListener("click", () => {
+  snoozeUntil = performance.now() + SNOOZE_MS;
+  updateSnoozeUI(performance.now());
+});
+
+// Independent of the render loop so the countdown keeps ticking even before
+// the camera stream is fully ready.
+setInterval(() => updateSnoozeUI(performance.now()), 1000);
+updateSnoozeUI(performance.now());
 
 window.addEventListener("keydown", (e) => {
   if (stage.hidden) return;
