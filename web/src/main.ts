@@ -486,18 +486,18 @@ function speak(text: string): void {
 // episode) a notification/speech alert once the smoothed state has been
 // continuously bad for `alertAfterMs`, and resets the episode once the state
 // returns to good/unknown. Returns whether this channel is currently
-// "alarming" (past the sustained threshold, unsnoozed).
+// "alarming" (past the sustained threshold, and not snoozed).
 function driveChannelAlerts(
   card: HTMLElement,
   episode: SustainedEpisode,
   isBad: boolean,
   now: number,
   alertAfterMs: number,
+  snoozed: boolean,
   notifyTitle: string,
   notifyBody: string,
   speechText: string
 ): boolean {
-  const snoozed = isSnoozed(now);
   const alarming = episode.update(isBad, now, alertAfterMs, snoozed, {
     onNotify: () => maybeNotify(notifyTitle, notifyBody),
     onSpeak: () => speak(speechText),
@@ -774,6 +774,7 @@ function renderLoop(): void {
     distanceIsBad,
     now,
     Math.max(1, Number(alertAfterInput.value) || 15) * 1000,
+    isSnoozed(now),
     "Distance Checker",
     smoothedDistance === "close"
       ? "You've been sitting too close for a while"
@@ -784,6 +785,10 @@ function renderLoop(): void {
 
   // Away/emergency tracking only applies during an active, running Focus
   // session — stepping away on a break, or with the timer paused, is fine.
+  // It deliberately ignores the general "snooze" (unlike the distance
+  // channel above): the whole point is to catch you when you've forgotten
+  // you're mid-session, so the only way to silence it is to pause the timer
+  // or turn it off in Settings.
   const trackingActive =
     enableAwayAlertInput.checked && pomodoroTimer.phase === "focus" && pomodoroTimer.running;
   const presenceIsBad = trackingActive && smoothedPresence === "away";
@@ -794,6 +799,7 @@ function renderLoop(): void {
     presenceIsBad,
     now,
     awayThresholdMs,
+    false,
     "Focus Timer",
     "You've been away from your desk during a focus session",
     "Emergency. Get back to your desk."
@@ -910,11 +916,12 @@ testEmergencyBtn.addEventListener("click", () => {
 snoozeBtn.addEventListener("click", () => {
   snoozeUntil = performance.now() + SNOOZE_MS;
   updateSnoozeUI(performance.now());
-  // Silence immediately rather than waiting for the next detection frame.
+  // Silence the distance alarm immediately rather than waiting for the next
+  // detection frame. The away/emergency alarm is NOT snoozed here — it
+  // ignores snooze entirely (see the comment above its driveChannelAlerts
+  // call), so pause the Pomodoro timer instead if you need to step away.
   distanceAlarmActive = false;
   alarmSoundEngine.stopRepeating();
-  emergencyAlarmActive = false;
-  emergencyAlarmEngine.stopRepeating();
 });
 
 // Independent of the render loop so the countdown keeps ticking even before
