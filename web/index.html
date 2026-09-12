@@ -3,12 +3,30 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#14120f" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <title>Distance Checker</title>
-  <link rel="stylesheet" href="style.css" />
+  <script>
+    (function () {
+      try {
+        var KEY = "distance-checker:theme";
+        var saved = localStorage.getItem(KEY);
+        var theme =
+          saved ||
+          (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark");
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <header>
-    <h1>Distance Checker</h1>
+    <div class="header-row">
+      <h1>Distance Checker</h1>
+      <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">🌙</button>
+    </div>
     <p class="subtitle">Real-time webcam distance tracking with on-device deep learning (MediaPipe Face Landmarker, runs entirely in your browser)</p>
   </header>
 
@@ -31,6 +49,17 @@
       <div class="panel">
         <div class="status-card" id="status-card">
           <span id="status-text">Waiting for face…</span>
+          <span id="status-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
+        </div>
+
+        <div class="sparkline-wrap">
+          <canvas id="distance-sparkline" width="280" height="60"></canvas>
+          <p class="hint sparkline-label">Distance over last 60s</p>
+        </div>
+
+        <div class="snooze-row">
+          <button id="snooze-btn" class="secondary">Snooze alerts (10 min)</button>
+          <span id="snooze-remaining" class="hint" hidden></span>
         </div>
 
         <div class="field">
@@ -54,15 +83,32 @@
             <label for="iris-mm">Assumed iris diameter (mm)</label>
             <input type="number" id="iris-mm" value="11.7" min="8" max="16" step="0.1" />
           </div>
+          <div class="field field-checkbox">
+            <label for="show-mesh-toggle">
+              <input type="checkbox" id="show-mesh-toggle" />
+              Show face mesh wireframe
+            </label>
+          </div>
+          <div class="field">
+            <label for="alert-after-seconds">Alert after sustained (seconds)</label>
+            <input type="number" id="alert-after-seconds" value="15" min="1" max="300" />
+          </div>
+          <div class="field checkbox-field">
+            <label><input type="checkbox" id="enable-notifications" /> Enable browser notifications</label>
+          </div>
+          <div class="field checkbox-field">
+            <label><input type="checkbox" id="speak-alerts" /> Speak distance alerts</label>
+          </div>
           <button id="change-camera-btn" class="secondary">Change camera</button>
         </details>
 
         <p class="hint">Sit at the distance above, then press <kbd>c</kbd> or click Calibrate. Only needs to be done once — it's saved in this browser.</p>
+        <button id="pip-btn" class="secondary" aria-pressed="false" title="Show the live camera feed and distance status in an always-on-top floating window" hidden>Float window (PiP)</button>
         <p class="fps" id="fps"></p>
       </div>
     </section>
   </main>
 
-  <script type="module" src="app.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

@@ -1,0 +1,5 @@
+web/node_modules
+web/dist
+web/dev-dist
+.venv
+__pycache__

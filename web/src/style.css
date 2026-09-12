@@ -11,7 +11,37 @@
   --bad: #ff5f6d;
 }
 
+[data-theme="light"] {
+  --bg: #f5f3ee;
+  --panel: #ffffff;
+  --card: #eeebe3;
+  --border: #dcd6c8;
+  --text: #211d16;
+  --muted: #6c6455;
+  --accent: #b1600f;
+  --ok: #1a8f4e;
+  --warn: #0d6fb8;
+  --bad: #c62839;
+}
+
 * { box-sizing: border-box; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 body {
   margin: 0;
@@ -19,11 +49,28 @@ body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   padding: 24px 16px 48px;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 header {
   max-width: 900px;
   margin: 0 auto 24px;
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.theme-toggle {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 1.1rem;
+  line-height: 1;
+  background: var(--card);
 }
 
 h1 {
@@ -149,6 +196,42 @@ select, input[type="number"] {
 .status-card.warn { border-color: var(--warn); color: var(--warn); }
 .status-card.bad { border-color: var(--bad); color: var(--bad); }
 
+.status-card.sustained { animation: sustained-pulse 1.2s ease-in-out infinite; }
+
+@keyframes sustained-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.snooze-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.snooze-row button {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+#snooze-remaining {
+  font-size: 0.75rem;
+}
+
+.checkbox-field {
+  flex-direction: row;
+  align-items: center;
+}
+
+.checkbox-field label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
 details summary {
   cursor: pointer;
   color: var(--muted);
@@ -168,10 +251,94 @@ details summary {
   margin: 0;
 }
 
+.sparkline-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#distance-sparkline {
+  width: 100%;
+  height: 60px;
+  display: block;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.sparkline-label {
+  text-align: center;
+}
+
+.field-checkbox label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.field-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
 kbd {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 0.85em;
+}
+
+/* --- Setup -> live view transition (progressively enhanced) --- */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+::view-transition-old(root) {
+  animation-name: vt-fade-out;
+}
+
+::view-transition-new(root) {
+  animation-name: vt-fade-in;
+}
+
+@keyframes vt-fade-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+@keyframes vt-fade-in {
+  from { opacity: 0; transform: scale(1.02); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.video-wrap-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  background: #000;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  aspect-ratio: 4 / 3;
+  max-width: 100%;
+}
+
+/* Applied to <body> inside the floating Document Picture-in-Picture window. */
+body.pip-body {
+  padding: 8px;
+}
+
+.pip-status {
+  margin: 8px 0 0;
 }
