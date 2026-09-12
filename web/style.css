@@ -26,6 +26,23 @@
 
 * { box-sizing: border-box; }
 
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -300,4 +317,28 @@ kbd {
 @keyframes vt-fade-in {
   from { opacity: 0; transform: scale(1.02); }
   to { opacity: 1; transform: scale(1); }
+}
+
+.video-wrap-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  background: #000;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  aspect-ratio: 4 / 3;
+  max-width: 100%;
+}
+
+/* Applied to <body> inside the floating Document Picture-in-Picture window. */
+body.pip-body {
+  padding: 8px;
+}
+
+.pip-status {
+  margin: 8px 0 0;
 }

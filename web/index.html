@@ -48,6 +48,7 @@
       <div class="panel">
         <div class="status-card" id="status-card">
           <span id="status-text">Waiting for face…</span>
+          <span id="status-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
 
         <div class="sparkline-wrap">
@@ -101,6 +102,7 @@
         </details>
 
         <p class="hint">Sit at the distance above, then press <kbd>c</kbd> or click Calibrate. Only needs to be done once — it's saved in this browser.</p>
+        <button id="pip-btn" class="secondary" aria-pressed="false" title="Show the live camera feed and distance status in an always-on-top floating window" hidden>Float window (PiP)</button>
         <p class="fps" id="fps"></p>
       </div>
     </section>
