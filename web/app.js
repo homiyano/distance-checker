@@ -10,6 +10,7 @@ const MODEL_URL =
 const LEFT_IRIS = [468, 469, 470, 471, 472];
 const RIGHT_IRIS = [473, 474, 475, 476, 477];
 const CALIBRATION_KEY = "distance-checker:calibration";
+const THEME_KEY = "distance-checker:theme";
 
 const el = (id) => document.getElementById(id);
 const startBtn = el("start-btn");
@@ -32,6 +33,7 @@ const fpsEl = el("fps");
 const sparklineCanvas = el("distance-sparkline");
 const sparklineCtx = sparklineCanvas.getContext("2d");
 const showMeshToggle = el("show-mesh-toggle");
+const themeToggleBtn = el("theme-toggle");
 
 let currentStream = null;
 let faceLandmarker = null;
@@ -66,6 +68,37 @@ function clearCalibration() {
   calibration = null;
   localStorage.removeItem(CALIBRATION_KEY);
 }
+
+// --- Theme (light/dark) ---
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  if (themeToggleBtn) {
+    const isLight = theme === "light";
+    themeToggleBtn.textContent = isLight ? "☀️" : "🌙";
+    themeToggleBtn.setAttribute("aria-label", isLight ? "Switch to dark theme" : "Switch to light theme");
+  }
+}
+
+function initTheme() {
+  // index.html already sets data-theme on <html> before this script loads
+  // (from localStorage, falling back to prefers-color-scheme), so just sync
+  // the toggle button's icon/label to whatever is currently applied.
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  applyTheme(current);
+}
+
+themeToggleBtn?.addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  const next = current === "light" ? "dark" : "light";
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // ignore storage failures (e.g. private browsing)
+  }
+  applyTheme(next);
+});
+
+initTheme();
 
 // --- Minimal enclosing circle (Welzl's algorithm) for a small point set ---
 function dist(a, b) {
@@ -369,8 +402,17 @@ startBtn.addEventListener("click", async () => {
       if (activeId) deviceSelect.value = activeId;
     }
     await ensureFaceLandmarker();
-    stage.hidden = false;
-    el("setup-panel").querySelector("#start-btn").hidden = true;
+
+    const showStage = () => {
+      stage.hidden = false;
+      el("setup-panel").querySelector("#start-btn").hidden = true;
+    };
+    if (document.startViewTransition) {
+      document.startViewTransition(() => showStage());
+    } else {
+      showStage();
+    }
+
     if (rafId === null) renderLoop();
   } catch (err) {
     console.error(err);

@@ -4,3 +4,4 @@ __pycache__/
 models/
 calibration.json
 camera_probe/
+.claude/worktrees/
