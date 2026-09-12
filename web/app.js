@@ -29,6 +29,9 @@ const calibrateBtn = el("calibrate-btn");
 const resetCalibBtn = el("reset-calib-btn");
 const changeCameraBtn = el("change-camera-btn");
 const fpsEl = el("fps");
+const sparklineCanvas = el("distance-sparkline");
+const sparklineCtx = sparklineCanvas.getContext("2d");
+const showMeshToggle = el("show-mesh-toggle");
 
 let currentStream = null;
 let faceLandmarker = null;
@@ -37,6 +40,13 @@ let latestIrisDiameterPx = null;
 let fps = 0;
 let lastFrameTime = performance.now();
 let rafId = null;
+
+// --- Distance sparkline (rolling ~60s buffer, updated at ~10fps) ---
+const SPARKLINE_WINDOW_MS = 60_000;
+const SPARKLINE_UPDATE_INTERVAL_MS = 100;
+const SPARKLINE_MAX_SAMPLES = Math.ceil(SPARKLINE_WINDOW_MS / SPARKLINE_UPDATE_INTERVAL_MS);
+const distanceHistory = []; // { t: performance.now(), distanceCm: number|null }
+let lastSparklineSampleTime = 0;
 
 function loadCalibration() {
   try {
@@ -184,6 +194,88 @@ function setStatus(text, kind) {
   if (kind) statusCard.classList.add(kind);
 }
 
+// --- Distance sparkline ---
+function recordDistanceSample(now, distanceCm) {
+  if (now - lastSparklineSampleTime < SPARKLINE_UPDATE_INTERVAL_MS) return;
+  lastSparklineSampleTime = now;
+  distanceHistory.push({ t: now, distanceCm });
+  while (distanceHistory.length > SPARKLINE_MAX_SAMPLES) distanceHistory.shift();
+  const cutoff = now - SPARKLINE_WINDOW_MS;
+  while (distanceHistory.length > 0 && distanceHistory[0].t < cutoff) distanceHistory.shift();
+  drawSparkline(now);
+}
+
+function drawSparkline(now) {
+  const w = sparklineCanvas.width;
+  const h = sparklineCanvas.height;
+  sparklineCtx.clearRect(0, 0, w, h);
+
+  const valid = distanceHistory.filter(
+    (s) => s.distanceCm != null && Number.isFinite(s.distanceCm)
+  );
+  if (valid.length < 2) return;
+
+  const tooClose = Number(tooCloseInput.value);
+  const tooFar = Number(tooFarInput.value);
+  let min = Math.min(...valid.map((s) => s.distanceCm), tooClose);
+  let max = Math.max(...valid.map((s) => s.distanceCm), tooFar);
+  if (max - min < 1) max = min + 1;
+  const pad = 6;
+
+  const xFor = (t) => {
+    const oldest = now - SPARKLINE_WINDOW_MS;
+    const frac = (t - oldest) / SPARKLINE_WINDOW_MS;
+    return pad + frac * (w - pad * 2);
+  };
+  const yFor = (d) => {
+    const frac = (d - min) / (max - min);
+    return h - pad - frac * (h - pad * 2);
+  };
+
+  // Guide lines for the too-close / too-far thresholds.
+  sparklineCtx.strokeStyle = "rgba(255,255,255,0.15)";
+  sparklineCtx.lineWidth = 1;
+  for (const threshold of [tooClose, tooFar]) {
+    const y = yFor(threshold);
+    sparklineCtx.beginPath();
+    sparklineCtx.moveTo(0, y);
+    sparklineCtx.lineTo(w, y);
+    sparklineCtx.stroke();
+  }
+
+  sparklineCtx.strokeStyle = "#ffb454";
+  sparklineCtx.lineWidth = 2;
+  sparklineCtx.beginPath();
+  distanceHistory.forEach((s, i) => {
+    if (s.distanceCm == null || !Number.isFinite(s.distanceCm)) return;
+    const x = xFor(s.t);
+    const y = yFor(s.distanceCm);
+    if (i === 0 || distanceHistory[i - 1].distanceCm == null) {
+      sparklineCtx.moveTo(x, y);
+    } else {
+      sparklineCtx.lineTo(x, y);
+    }
+  });
+  sparklineCtx.stroke();
+}
+
+// --- Face mesh wireframe overlay ---
+function drawFaceMesh(landmarks, w, h) {
+  const connectors = FaceLandmarker.FACE_LANDMARKS_TESSELATION;
+  if (!connectors) return;
+  ctx.strokeStyle = "rgba(95, 217, 127, 0.5)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (const { start, end } of connectors) {
+    const a = landmarks[start];
+    const b = landmarks[end];
+    if (!a || !b) continue;
+    ctx.moveTo(a.x * w, a.y * h);
+    ctx.lineTo(b.x * w, b.y * h);
+  }
+  ctx.stroke();
+}
+
 function renderLoop() {
   rafId = requestAnimationFrame(renderLoop);
   if (video.readyState < 2) return;
@@ -213,6 +305,10 @@ function renderLoop() {
     );
     latestIrisDiameterPx = diameter;
 
+    if (showMeshToggle.checked) {
+      drawFaceMesh(landmarks, canvas.width, canvas.height);
+    }
+
     ctx.strokeStyle = "#5fd97f";
     ctx.lineWidth = 2;
     for (const c of [leftCenter, rightCenter]) {
@@ -225,6 +321,7 @@ function renderLoop() {
       const distanceCm = distanceMmFromCalibration(calibration, diameter) / 10;
       const tooClose = Number(tooCloseInput.value);
       const tooFar = Number(tooFarInput.value);
+      recordDistanceSample(now, distanceCm);
       if (distanceCm < tooClose) {
         setStatus(`Too close (${distanceCm.toFixed(0)} cm)`, "bad");
       } else if (distanceCm > tooFar) {
@@ -233,9 +330,11 @@ function renderLoop() {
         setStatus(`Good distance (${distanceCm.toFixed(0)} cm)`, "ok");
       }
     } else {
+      recordDistanceSample(now, null);
       setStatus(`Not calibrated — sit at ${calibDistanceInput.value}cm and press Calibrate`, "warn");
     }
   } else {
+    recordDistanceSample(now, null);
     setStatus("No face detected", "bad");
   }
 }
