@@ -65,7 +65,44 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore/overwrite any saved calibration on startup",
     )
+    p.add_argument(
+        "--list-cameras",
+        action="store_true",
+        help="Probe camera indices 0-4, save a snapshot from each, then exit "
+        "(useful when macOS Continuity Camera/OBS shifts which index is your real webcam)",
+    )
     return p.parse_args()
+
+
+def list_cameras(max_index: int = 5) -> None:
+    backend = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
+    out_dir = Path("camera_probe")
+    out_dir.mkdir(exist_ok=True)
+    print(f"Probing camera indices 0-{max_index - 1}, saving snapshots to {out_dir}/ ...")
+    for idx in range(max_index):
+        cap = cv2.VideoCapture(idx, backend)
+        if not cap.isOpened():
+            print(f"  [{idx}] could not open")
+            cap.release()
+            continue
+        ok, frame = False, None
+        for _ in range(15):
+            ok, frame = cap.read()
+            if ok:
+                break
+            time.sleep(0.1)
+        cap.release()
+        if not ok:
+            print(f"  [{idx}] opened but no frame")
+            continue
+        mean_val = frame.mean()
+        h, w = frame.shape[:2]
+        out_path = out_dir / f"camera_{idx}.jpg"
+        cv2.imwrite(str(out_path), frame)
+        note = "looks black/blank" if mean_val < 1.0 else "has image content"
+        print(f"  [{idx}] {w}x{h}, mean pixel {mean_val:.2f} ({note}) -> saved {out_path}")
+    print("Open the saved .jpg files and find the one showing your face; "
+          "run again with --camera <that index>.")
 
 
 def draw_label(frame, text, org, color=COLOR_TEXT_BG, text_color=(255, 255, 255), scale=0.7, thickness=2):
@@ -85,6 +122,10 @@ def status_for_distance(distance_cm: float, too_close_cm: float, too_far_cm: flo
 
 def main() -> None:
     args = parse_args()
+
+    if args.list_cameras:
+        list_cameras()
+        return
 
     model_path = ensure_model(args.model)
 

@@ -58,6 +58,28 @@ python main.py --camera 1          # use a different camera index
 python main.py --reset-calibration # ignore saved calibration.json on startup
 ```
 
+## Picking the right camera (Continuity Camera / OBS)
+
+If macOS has your iPhone (Continuity Camera) or OBS Virtual Camera installed,
+index `0` may not be your laptop's built-in webcam — you might even see a
+handoff prompt pop up on your iPhone instead of getting a live feed. Run:
+
+```bash
+python main.py --list-cameras
+```
+
+This probes indices 0-4, saves a snapshot from each into `camera_probe/`, and
+prints their resolution. Open the snapshots, find the one showing your face
+(the built-in webcam), then always pass that index, e.g.:
+
+```bash
+python main.py --camera 1
+```
+
+To stop the iPhone from being offered as a webcam at all: on the iPhone, go
+to **Settings → General → AirPlay & Handoff** and turn off **Continuity
+Camera Webcam**.
+
 ## Notes
 
 - Tested with `mediapipe==0.10.30`. Newer mediapipe (1.0.x) currently has a
