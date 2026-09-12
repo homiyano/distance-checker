@@ -29,6 +29,9 @@ const calibrateBtn = el("calibrate-btn");
 const resetCalibBtn = el("reset-calib-btn");
 const changeCameraBtn = el("change-camera-btn");
 const fpsEl = el("fps");
+const statusAnnouncer = el("status-announcer");
+const pipBtn = el("pip-btn");
+const videoWrap = document.querySelector(".video-wrap");
 
 let currentStream = null;
 let faceLandmarker = null;
@@ -37,6 +40,14 @@ let latestIrisDiameterPx = null;
 let fps = 0;
 let lastFrameTime = performance.now();
 let rafId = null;
+let lastAnnouncedKind = undefined;
+
+// --- Document Picture-in-Picture (floating window) ---
+let pipWindow = null;
+let pipStatusEl = null;
+let pipPlaceholder = null;
+const supportsDocumentPip = "documentPictureInPicture" in window;
+if (pipBtn) pipBtn.hidden = !supportsDocumentPip;
 
 function loadCalibration() {
   try {
@@ -182,6 +193,101 @@ function setStatus(text, kind) {
   statusText.textContent = text;
   statusCard.classList.remove("ok", "warn", "bad");
   if (kind) statusCard.classList.add(kind);
+
+  // Screen readers: only announce when the status actually changes state
+  // (not on every frame, since the cm value in `text` fluctuates constantly).
+  if (kind !== lastAnnouncedKind) {
+    lastAnnouncedKind = kind;
+    if (statusAnnouncer) {
+      statusAnnouncer.setAttribute("aria-live", kind === "bad" ? "assertive" : "polite");
+      statusAnnouncer.textContent = text;
+    }
+  }
+
+  // Mirror onto the compact floating-window readout, if open.
+  if (pipStatusEl) {
+    pipStatusEl.textContent = text;
+    pipStatusEl.classList.remove("ok", "warn", "bad");
+    if (kind) pipStatusEl.classList.add(kind);
+  }
+}
+
+// --- Document Picture-in-Picture floating window ---
+function copyStylesIntoWindow(win) {
+  for (const styleSheet of document.styleSheets) {
+    try {
+      const cssRules = [...styleSheet.cssRules].map((rule) => rule.cssText).join("");
+      const style = document.createElement("style");
+      style.textContent = cssRules;
+      win.document.head.appendChild(style);
+    } catch {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.type = styleSheet.type;
+      link.media = styleSheet.media;
+      link.href = styleSheet.href;
+      win.document.head.appendChild(link);
+    }
+  }
+}
+
+function onPipClosed() {
+  if (pipPlaceholder && pipPlaceholder.parentElement) {
+    pipPlaceholder.replaceWith(videoWrap);
+  }
+  pipPlaceholder = null;
+  pipStatusEl = null;
+  pipWindow = null;
+  if (pipBtn) {
+    pipBtn.textContent = "Float window (PiP)";
+    pipBtn.setAttribute("aria-pressed", "false");
+  }
+}
+
+async function openPip() {
+  if (!supportsDocumentPip || pipWindow) return;
+  try {
+    pipWindow = await documentPictureInPicture.requestWindow({ width: 340, height: 320 });
+  } catch (err) {
+    console.error("Picture-in-Picture failed:", err);
+    pipWindow = null;
+    return;
+  }
+
+  copyStylesIntoWindow(pipWindow);
+  pipWindow.document.title = "Distance Checker";
+  pipWindow.document.body.classList.add("pip-body");
+
+  pipPlaceholder = document.createElement("div");
+  pipPlaceholder.className = "video-wrap-placeholder";
+  pipPlaceholder.textContent = "Floating in the Picture-in-Picture window…";
+  videoWrap.replaceWith(pipPlaceholder);
+
+  pipStatusEl = document.createElement("div");
+  pipStatusEl.className = "status-card pip-status";
+  pipStatusEl.textContent = statusText.textContent;
+  for (const kind of ["ok", "warn", "bad"]) {
+    if (statusCard.classList.contains(kind)) pipStatusEl.classList.add(kind);
+  }
+
+  pipWindow.document.body.appendChild(videoWrap);
+  pipWindow.document.body.appendChild(pipStatusEl);
+  pipWindow.addEventListener("pagehide", onPipClosed, { once: true });
+
+  if (pipBtn) {
+    pipBtn.textContent = "Exit floating window";
+    pipBtn.setAttribute("aria-pressed", "true");
+  }
+}
+
+if (pipBtn) {
+  pipBtn.addEventListener("click", () => {
+    if (pipWindow) {
+      pipWindow.close();
+    } else {
+      openPip();
+    }
+  });
 }
 
 function renderLoop() {
@@ -300,6 +406,12 @@ resetCalibBtn.addEventListener("click", doResetCalibration);
 
 window.addEventListener("keydown", (e) => {
   if (stage.hidden) return;
+  // Don't hijack keystrokes while the user is typing into a form control.
+  const active = document.activeElement;
+  const tag = active && active.tagName;
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || (active && active.isContentEditable)) {
+    return;
+  }
   if (e.key === "c") doCalibrate();
   if (e.key === "r") doResetCalibration();
 });
